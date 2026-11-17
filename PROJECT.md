@@ -492,12 +492,13 @@ Claude Code는 새로운 개발 작업을 시작할 때 반드시 이 문서를 
 - [x] Supabase 프로젝트 `raon-tennis` 생성 (도쿄 리전 ap-northeast-1, 무료 플랜). 무료 2개 제한 때문에 `electalk-dev`를 일시정지함(2026-11-17, 최대 1년 안에 재개 가능)
 - [x] `supabase/schema.sql` 실행 완료 + DB 자체 시험 통과(겹침 차단, 이어지는 시간 허용, 이력 등록/수정/취소 기록, 시험 데이터는 롤백)
 - [x] 보안: Supabase '새 사용자 가입 허용' 끔 → 관리자가 대시보드에서 만든 계정만 로그인 가능
-- [ ] 관리자 계정 만들기 (Authentication > Users > Add user, 이메일·비밀번호는 총무님이 직접 입력)
+- [x] 관리자 계정 만들기 완료 (총무님이 직접 입력). 로그인 없이 API로 읽으면 빈 결과 확인(RLS 작동)
 - [x] `app/config.js`에 Supabase URL과 publishable(공개용) 키 입력. supabase-js 2.100.0 사용
 - [ ] 서버 모드로 앱에서 로그인·등록·수정·취소 테스트
-- [ ] GitHub Pages에 올리기 → 총무님 폰에서 접속·홈 화면에 추가 테스트
+- [x] GitHub Pages 배포 완료: https://purehanjun1-hash.github.io/raon-tennis/ (저장소 github.com/purehanjun1-hash/raon-tennis, 공개). `main`에 push하면 `.github/workflows/pages.yml`이 `app/` 폴더를 자동 배포
+- [ ] 총무님 폰(갤럭시)에서 접속·로그인·홈 화면에 추가 테스트
 - [ ] 장소별 실제 코트 번호 입력 (설정 > 장소 관리)
-- [ ] 오프라인 캐시(service worker)는 실제 인터넷 주소에서 확인 (Claude 미리보기 브라우저는 service worker를 막아서 확인 못 함)
+- [x] 실제 주소에서 service worker 등록·manifest·아이콘 정상 확인
 
 ### 다음 단계
 - Phase 2: 카카오톡 TXT 업로드 → AI 분석 (AI 키는 Supabase Edge Function 같은 서버 쪽에 보관, 앱 코드에 넣지 않음)
