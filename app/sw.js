@@ -1,5 +1,5 @@
 // 간단한 오프라인 지원: 항상 최신 파일을 먼저 받고, 인터넷이 안 되면 저장해 둔 화면을 보여줍니다.
-const CACHE = "raon-v3";
+const CACHE = "raon-v4";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "store.js", "kakao.js", "config.js", "manifest.webmanifest", "icon.svg"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => {

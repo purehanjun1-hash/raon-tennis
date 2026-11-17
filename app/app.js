@@ -331,8 +331,12 @@
   const IMP_KEY = "raon_import_v1";
   const ACT_LABEL = { create: "새 예약", update: "변경", cancel: "취소", duplicate: "이미 등록됨" };
   const imp = { fileName: "", messages: [], fromDate: addDays(todayKST(), -14), proposals: [], busy: false, error: "", progress: "" };
-  try { const saved = JSON.parse(localStorage.getItem(IMP_KEY)); if (saved && Array.isArray(saved.proposals)) { imp.proposals = saved.proposals; imp.fileName = saved.fileName || ""; } } catch (e) { /* 저장된 것 없음 */ }
-  function saveImp() { try { localStorage.setItem(IMP_KEY, JSON.stringify({ fileName: imp.fileName, proposals: imp.proposals })); } catch (e) { /* 저장 불가 */ } }
+  imp.resume = null; // 중간에 멈춘 분석을 이어서 하기 위한 정보 { file, run, lastId }
+  // 등록 전에 이미 취소된 새 예약은 승인할 필요 없음
+  const tidyProp = (p) => { if (p.state === "pending" && p.action === "create" && p.status === "취소") p.state = "dropped"; return p; };
+  try { const saved = JSON.parse(localStorage.getItem(IMP_KEY)); if (saved && Array.isArray(saved.proposals)) { imp.proposals = saved.proposals.map(tidyProp); imp.fileName = saved.fileName || ""; imp.resume = saved.resume || null; } } catch (e) { /* 저장된 것 없음 */ }
+  function saveImp() { try { localStorage.setItem(IMP_KEY, JSON.stringify({ fileName: imp.fileName, proposals: imp.proposals, resume: imp.resume })); } catch (e) { /* 저장 불가 */ } }
+  const resumeInfo = () => (imp.resume && imp.resume.file === imp.fileName && imp.messages.length ? imp.resume : null);
 
   const candidates = () => imp.messages.filter((m) => m.sent_at.slice(0, 10) >= imp.fromDate && RaonKakao.isCandidate(m, state.venues.map((v) => v.venue_name)));
   const withWeekday = (s) => s ? `${s.slice(0, 10)}(${DOW[dow(s.slice(0, 10))]})${s.slice(10)}` : s;
@@ -394,7 +398,9 @@
         <div class="field"><label>이 날짜 이후 메시지만</label><input type="date" id="fromDate" value="${esc(imp.fromDate)}"></div>
         <div class="stat">전체 메시지 <b>${imp.messages.length}</b>개 중 예약 관련으로 보이는 메시지 <b>${cand.length}</b>개</div>
         <p class="note">AI에는 예약 관련으로 보이는 메시지만 보내요. 잡담 같은 다른 대화는 보내지도, 저장하지도 않아요.</p>
-        <div class="btns"><button class="btn primary" id="runAI" ${imp.busy || !cand.length ? "disabled" : ""}>${imp.busy ? "AI가 분석하는 중… " + esc(imp.progress) : `🤖 AI로 분석하기 (${cand.length}개)`}</button></div>
+        ${(() => { const rs = resumeInfo(); const left = rs ? cand.filter((m) => m.id > rs.lastId).length : cand.length;
+          return `<div class="btns"><button class="btn primary" id="runAI" ${imp.busy || !left ? "disabled" : ""}>${imp.busy ? "AI가 분석하는 중… " + esc(imp.progress) : rs ? `▶ 멈춘 곳부터 이어서 분석하기 (남은 ${left}개)` : `🤖 AI로 분석하기 (${cand.length}개)`}</button>
+          ${rs && !imp.busy ? `<button class="btn ghost" id="restartAI">처음부터 다시 분석</button>` : ""}</div>`; })()}
         ${imp.error ? `<div class="err" style="margin-top:10px">${esc(imp.error)}</div>` : ""}
       </div>` : ""}
       ${imp.proposals.length ? `
@@ -415,6 +421,7 @@
     };
     const fd = $("#fromDate"); if (fd) fd.onchange = (e) => { imp.fromDate = e.target.value || imp.fromDate; renderImport(); };
     const run = $("#runAI"); if (run) run.onclick = runAnalysis;
+    const rst = $("#restartAI"); if (rst) rst.onclick = () => { if (confirm("처음부터 다시 분석할까요? (비용이 다시 들어요)")) { imp.resume = null; saveImp(); renderImport(); } };
     const cp = $("#clearProps"); if (cp) cp.onclick = () => { imp.proposals = []; saveImp(); renderImport(); };
   }
 
@@ -470,8 +477,10 @@
   }
 
   async function runAnalysis() {
-    const cand = candidates();
+    const rs = resumeInfo();
+    const cand = rs ? candidates().filter((m) => m.id > rs.lastId) : candidates();
     if (!cand.length || imp.busy) return;
+    const runId = rs ? rs.run : Date.now();
     imp.busy = true; imp.error = ""; imp.progress = ""; renderImport();
     let importId = null;
     try { importId = await store.createImport(imp.fileName); } catch (e) { /* 기록 실패해도 분석은 진행 */ }
@@ -481,7 +490,10 @@
       .map((r) => ({ id: r.id, date: r.reservation_date, start: r.start_time, end: r.end_time, venue_id: r.venue_id, court: r.court_number, reserved_by: r.reserved_by, status: r.status }));
     const today = todayKST();
     const BATCH = 50;
-    const found = [];
+    // 이어서 할 때는 지난번에 찾은 제안부터 이어 붙인다 (묶음 사이 연결 유지)
+    const found = rs ? imp.proposals.filter((p) => p.run === runId) : [];
+    const others = imp.proposals.filter((p) => !found.includes(p) && p.state === "pending");
+    const publish = () => { imp.proposals = found.concat(others); saveImp(); };
     // 서버 예약 + 앞 묶음에서 찾은 제안을 반영한 '지금까지 알려진 예약' 목록
     const knownExisting = () => {
       const list = base.map((r) => Object.assign({}, r));
@@ -505,6 +517,7 @@
     const queue = [];
     for (let i = 0; i < cand.length; i += BATCH) queue.push(cand.slice(i, i + BATCH));
     let done = 0, waits = 0;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     try {
       while (queue.length) {
         const chunk = queue.shift();
@@ -518,16 +531,21 @@
             messages: chunk.map((m) => ({ id: m.id, sent_at: withWeekday(m.sent_at), author: m.author, text: m.text })),
           });
         } catch (e) {
-          if (e.status === 429 && waits < 3) { waits++; queue.unshift(chunk); await new Promise((r) => setTimeout(r, 20000)); continue; }
+          // AI 서버가 바쁨/요청 많음: 기다렸다가 같은 묶음 다시
+          if ((e.status === 429 || e.status === 503) && waits < 6) {
+            waits++; queue.unshift(chunk);
+            imp.progress = `(${done}/${cand.length}) 잠시 기다리는 중…`; renderImport();
+            await sleep(30000); continue;
+          }
           // 시간 초과·응답 너무 김 등: 묶음을 반으로 나눠 다시 시도
-          if (e.status !== 401 && e.status !== 500 && chunk.length > 10) {
+          if (e.status !== 401 && e.status !== 500 && e.status !== 429 && e.status !== 503 && chunk.length > 10) {
             const h = Math.ceil(chunk.length / 2);
             queue.unshift(chunk.slice(0, h), chunk.slice(h));
             continue;
           }
           throw e;
         }
-        done += chunk.length;
+        done += chunk.length; waits = 0;
         (res.items || []).forEach((it) => {
           const msgs = (it.message_ids || []).map((id) => imp.messages[id]).filter(Boolean)
             .map((m) => ({ author: m.author, sent_at: m.sent_at, text: m.text }));
@@ -540,18 +558,20 @@
           }
           if (host) return mergeInto(host, it, msgs);
           if (tid && /^new-/.test(tid)) it.target_reservation_id = null;
-          found.push(Object.assign({}, it, { msgs, state: "pending" }));
+          found.push(tidyProp(Object.assign({}, it, { msgs, state: "pending", run: runId })));
         });
+        imp.resume = { file: imp.fileName, run: runId, lastId: chunk[chunk.length - 1].id };
+        publish(); // 묶음마다 저장 → 중간에 멈춰도 이어서 가능
       }
-      imp.proposals = found.concat(imp.proposals.filter((p) => p.state === "pending"));
-      saveImp();
+      imp.resume = null;
+      publish();
       const n = found.filter((p) => p.state === "pending").length;
       await store.updateImport(importId, `완료: 제안 ${n}개`);
       toast(n ? `AI 제안 ${n}개를 찾았어요.` : "예약 관련 내용을 찾지 못했어요.");
     } catch (e) {
-      imp.error = e.message + (found.length ? ` (그 전까지 찾은 제안 ${found.length}개는 아래에 있어요.)` : "");
+      imp.error = e.message + (found.length ? ` (그 전까지 찾은 제안은 아래에 있어요. 잠시 뒤 '이어서 분석하기'를 누르면 멈춘 곳부터 계속해요.)` : "");
       await store.updateImport(importId, "오류: " + e.message);
-      if (found.length) { imp.proposals = found.concat(imp.proposals.filter((p) => p.state === "pending")); saveImp(); }
+      publish();
     } finally {
       imp.busy = false; imp.progress = ""; renderImport();
     }

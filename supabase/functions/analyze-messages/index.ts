@@ -130,12 +130,15 @@ Deno.serve(async (req) => {
     const text = response.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     const parsed = JSON.parse(text);
     return json({ items: parsed.items ?? [], usage: response.usage });
-  } catch (e) {
-    if (e instanceof Anthropic.AuthenticationError) return json({ error: "AI 키가 올바르지 않아요." }, 500);
-    if (e instanceof Anthropic.RateLimitError) return json({ error: "AI 요청이 많아요. 잠시 후 다시 시도해 주세요." }, 429);
-    if (e instanceof Anthropic.APIStatusError) return json({ error: `AI 서버 오류 (${e.status})` }, 502);
-    if (e instanceof Anthropic.APIConnectionError) return json({ error: "AI 서버에 연결하지 못했어요." }, 502);
+  } catch (e: any) {
+    // SDK 오류 클래스 이름에 기대지 않고 status 숫자로 구분 (원인은 로그에 남김)
+    console.error("analyze error", e?.status, e?.name, String(e?.message ?? e).slice(0, 500));
+    const st = typeof e?.status === "number" ? e.status : 0;
+    if (st === 401 || st === 403) return json({ error: "AI 키가 올바르지 않아요." }, 500);
+    if (st === 429) return json({ error: "AI 요청이 많아요. 잠시 후 다시 시도해 주세요." }, 429);
+    if (st >= 500) return json({ error: `AI 서버가 바빠요 (${st}). 잠시 후 다시 시도해 주세요.` }, 503);
+    if (st) return json({ error: `AI 요청 오류 (${st}): ${String(e?.message ?? "").slice(0, 200)}` }, 502);
     if (e instanceof SyntaxError) return json({ error: "AI 응답을 읽지 못했어요. 다시 시도해 주세요." }, 502);
-    throw e;
+    return json({ error: `AI 서버에 연결하지 못했어요. (${String(e?.message ?? e).slice(0, 200)})` }, 502);
   }
 });
