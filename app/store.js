@@ -145,6 +145,12 @@
       const x = Object.assign({ id: uid(), created_at: nowIso() }, f); d.attendance.push(x); this._save(d); return x;
     }
     async removeAttendance(id) { const d = this._load(); d.attendance = (d.attendance || []).filter((x) => x.id !== id); this._save(d); }
+    async listMatches() { return (this._load().matches || []).slice(); }
+    async saveDayMatches(date, rows) {
+      const d = this._load();
+      d.matches = (d.matches || []).filter((m) => m.play_date !== date).concat(rows.map((r) => Object.assign({ id: uid(), created_at: nowIso(), play_date: date }, r)));
+      this._save(d);
+    }
     async analyze() { throw new Error("체험 모드에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결해야 해요."); }
     async createImport() { return null; }
     async updateImport() {}
@@ -205,6 +211,12 @@
       return normAtt(this._check(res));
     }
     async removeAttendance(id) { this._check(await this.sb.from("attendance").delete().eq("id", id)); }
+    async listMatches() { return this._check(await this.sb.from("matches").select("*").order("play_date").order("game_no").order("court_no")); }
+    // 그날 결과를 통째로 바꿔 저장 (지운 뒤 새로 넣기)
+    async saveDayMatches(date, rows) {
+      this._check(await this.sb.from("matches").delete().eq("play_date", date));
+      if (rows.length) this._check(await this.sb.from("matches").insert(rows.map((r) => Object.assign({ play_date: date }, r))));
+    }
     // AI 분석 (서버 함수 호출). payload: { today, venues, existing, messages }
     async analyze(payload) {
       const { data, error } = await this.sb.functions.invoke("analyze-messages", { body: payload });

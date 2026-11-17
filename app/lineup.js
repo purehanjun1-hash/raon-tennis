@@ -121,6 +121,35 @@
     save();
   }
 
+  // ---------- 스코어 · 기록 ----------
+  const scored = (c) => c.score && c.score[0] !== "" && c.score[1] !== "" && c.score[0] != null && c.score[1] != null;
+  // rows: [{team_a, team_b, score_a, score_b}] → 사람별 경기·승·무·패·득실
+  function tally(rows) {
+    const t = {};
+    const add = (name, my, op) => {
+      const x = t[name] || (t[name] = { name, n: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0 });
+      x.n++; x.gf += my; x.ga += op;
+      if (my > op) x.w++; else if (my < op) x.l++; else x.d++;
+    };
+    rows.forEach((r) => { r.team_a.forEach((n) => add(n, r.score_a, r.score_b)); r.team_b.forEach((n) => add(n, r.score_b, r.score_a)); });
+    return Object.values(t).sort((a, b) => (b.w / b.n) - (a.w / a.n) || (b.gf - b.ga) - (a.gf - a.ga) || b.n - a.n);
+  }
+  function dayRows() {
+    const out = [];
+    (st.result ? st.result.games : []).forEach((g) => g.courts.forEach((c, i) => {
+      if (scored(c)) out.push({ game_no: g.no, court_no: i + 1, match_type: c.type === "자유" ? "복식" : c.type, team_a: c.teams[0], team_b: c.teams[1], score_a: Number(c.score[0]), score_b: Number(c.score[1]) });
+    }));
+    return out;
+  }
+  const pct = (x) => x.n ? Math.round((x.w / x.n) * 100) + "%" : "-";
+  const diff = (x) => { const d = x.gf - x.ga; return (d > 0 ? "+" : "") + d; };
+  function tableHtml(list) {
+    if (!list.length) return `<div class="note">아직 스코어가 없어요.</div>`;
+    return `<table class="lu-tbl"><thead><tr><th>이름</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득실</th></tr></thead><tbody>
+      ${list.map((x) => `<tr><td>${esc(x.name)}</td><td>${x.n}</td><td>${x.w}</td><td>${x.d}</td><td>${x.l}</td><td><b>${pct(x)}</b></td><td>${diff(x)}</td></tr>`).join("")}</tbody></table>`;
+  }
+  let hist = null; // 서버에 저장된 전체 기록 (한 번 불러오면 기억)
+
   function kakaoText() {
     const r = st.result; if (!r) return "";
     const d = st.date ? `${Number(st.date.slice(5, 7))}/${Number(st.date.slice(8, 10))} ` : "";
@@ -128,9 +157,17 @@
     r.games.forEach((g) => {
       lines.push("", `[${g.no}게임] ${g.time}`);
       if (g.short) lines.push(" 인원 부족 (4명 미만)");
-      g.courts.forEach((c, i) => lines.push(` ${i + 1}코트(${c.type === "자유" ? "복식" : c.type}) ${c.teams[0].join("·")} vs ${c.teams[1].join("·")}`));
+      g.courts.forEach((c, i) => {
+        const sc = scored(c) ? ` ${c.teams[0].join("·")} ${c.score[0]} : ${c.score[1]} ${c.teams[1].join("·")}` : ` ${c.teams[0].join("·")} vs ${c.teams[1].join("·")}`;
+        lines.push(` ${i + 1}코트(${c.type === "자유" ? "복식" : c.type})${sc}`);
+      });
       if (g.rest.length) lines.push(` 쉼: ${g.rest.join(", ")}`);
     });
+    const day = tally(dayRows());
+    if (day.length) {
+      lines.push("", "📊 오늘 결과 (승-무-패 · 득실)");
+      day.forEach((x) => lines.push(` ${x.name} ${x.w}-${x.d}-${x.l} (${diff(x)})`));
+    }
     return lines.join("\n");
   }
 
@@ -155,12 +192,28 @@
       ${r.games.map((g) => `<div class="card lu-game">
         <div class="lu-gh"><b>${g.no}게임</b><span>${esc(g.time)}</span></div>
         ${g.short ? `<div class="note">인원이 4명보다 적어 경기를 짤 수 없어요.</div>` : ""}
-        ${g.courts.map((c, i) => `<div class="lu-court"><span class="lu-ct t-${esc(c.type)}">${i + 1}코트 · ${c.type === "자유" ? "복식" : esc(c.type)}</span>
-          <div class="lu-vs"><span>${c.teams[0].map(esc).join(" · ")}</span><i>vs</i><span>${c.teams[1].map(esc).join(" · ")}</span></div></div>`).join("")}
+        ${g.courts.map((c, i) => {
+          const ok = scored(c), a = ok ? Number(c.score[0]) : 0, b = ok ? Number(c.score[1]) : 0;
+          const tag = (me, op) => ok ? (me > op ? `<em class="win">승</em>` : me < op ? `<em class="lose">패</em>` : `<em>무</em>`) : "";
+          const sv = (k) => c.score && c.score[k] != null ? esc(c.score[k]) : "";
+          return `<div class="lu-court"><span class="lu-ct t-${esc(c.type)}">${i + 1}코트 · ${c.type === "자유" ? "복식" : esc(c.type)}</span>
+          <div class="lu-vs">
+            <span class="${ok && a > b ? "w" : ""}">${c.teams[0].map(esc).join(" · ")} ${tag(a, b)}</span>
+            <span class="lu-score"><input type="number" inputmode="numeric" min="0" max="99" data-lu-sc="${g.no}-${i}-0" value="${sv(0)}" aria-label="왼쪽 팀 점수"><b>:</b><input type="number" inputmode="numeric" min="0" max="99" data-lu-sc="${g.no}-${i}-1" value="${sv(1)}" aria-label="오른쪽 팀 점수"></span>
+            <span class="${ok && b > a ? "w" : ""}">${tag(b, a)} ${c.teams[1].map(esc).join(" · ")}</span>
+          </div></div>`;
+        }).join("")}
         ${g.rest.length ? `<div class="lu-rest">쉼: ${g.rest.map(esc).join(", ")}</div>` : ""}
       </div>`).join("")}
       <div class="card"><p class="step">사람별 게임 수</p><div class="lu-count">${r.count.map((c) => `<span>${esc(c.name)} <b>${c.n}</b></span>`).join("")}</div></div>
+      <div class="card"><p class="step">📊 오늘 결과 <span class="lu-sum">스코어 넣은 ${dayRows().length}경기</span></p>
+        ${tableHtml(tally(dayRows()))}
+        <div class="btns"><button class="btn att" id="luSave" ${dayRows().length ? "" : "disabled"}>${r.savedAt ? "✓ 저장됨 · 다시 저장" : "오늘 결과 기록에 저장"}</button></div>
+        <p class="note">저장하면 누적 기록에 들어가요. 같은 날짜로 다시 저장하면 그날 기록을 새로 덮어써요.</p>
+      </div>
       <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button><button class="btn primary" id="luCopy">카톡용 복사</button></div>` : "";
+    const histHtml = `<div class="section-title"><span>🏆 누적 기록</span><button class="smallbtn" id="luHist">${hist ? "새로고침" : "불러오기"}</button></div>
+      <div class="card">${hist ? (hist.length ? `<p class="note" style="margin-top:0">${esc(hist[0].play_date)} ~ ${esc(hist[hist.length - 1].play_date)} · ${new Set(hist.map((m) => m.play_date)).size}일 · ${hist.length}경기</p>${tableHtml(tally(hist))}` : `<div class="note">저장된 기록이 아직 없어요.</div>`) : `<div class="note">'불러오기'를 누르면 지금까지 저장한 경기 기록을 사람별로 모아 보여 줘요.</div>`}</div>`;
 
     view.innerHTML = `
       <div class="card">
@@ -193,7 +246,8 @@
         <p class="note">늦게 오는 사람은 '○게임부터', 일찍 가는 사람은 '○게임까지'로 정해 주세요. 게스트 이름은 눌러서 바꿀 수 있어요.</p>
         <div class="btns"><button class="btn primary" id="luRun" ${on.length < 4 ? "disabled" : ""}>${on.length < 4 ? "4명 이상 골라 주세요" : "조 짜기"}</button></div>
       </div>
-      ${res}`;
+      ${res}
+      ${histHtml}`;
 
     const rerender = () => render(view, ui);
     const setNum = (id, k, min, max) => { const el = view.querySelector(id); el.onchange = () => { let v = Number(el.value); if (!(v >= min)) v = min; if (v > max) v = max; st[k] = v; save(); rerender(); }; };
@@ -222,7 +276,35 @@
     view.querySelectorAll("[data-lu-to]").forEach((el) => el.onchange = () => { const p = st.people[Number(el.dataset.luTo)]; p.to = Number(el.value); if (p.to && p.to < p.from) p.from = p.to; save(); rerender(); });
     view.querySelector("#luAll").onclick = () => { st.people.forEach((p) => { if (!p.guest) p.on = true; }); save(); rerender(); };
     view.querySelector("#luNone").onclick = () => { st.people.forEach((p) => { p.on = false; }); save(); rerender(); };
+    const store = ui && ui.store;
+    view.querySelectorAll("[data-lu-sc]").forEach((el) => el.onchange = () => {
+      const [g, i, k] = el.dataset.luSc.split("-").map(Number);
+      const c = st.result.games[g - 1].courts[i];
+      c.score = c.score || ["", ""];
+      const v = el.value.trim();
+      c.score[k] = v === "" ? "" : Math.max(0, Math.min(99, Math.round(Number(v)) || 0));
+      st.result.savedAt = null;
+      save();
+      const y = window.scrollY; rerender(); window.scrollTo(0, y);
+    });
+    const svb = view.querySelector("#luSave");
+    if (svb) svb.onclick = async () => {
+      if (!st.date) return toast("날짜를 먼저 넣어 주세요.");
+      try {
+        svb.disabled = true;
+        await store.saveDayMatches(st.date, dayRows());
+        st.result.savedAt = Date.now(); save();
+        hist = await store.listMatches();
+        toast(`${st.date} 경기 ${dayRows().length}개를 저장했어요.`);
+      } catch (e) { toast("저장 실패: " + e.message); }
+      const y = window.scrollY; rerender(); window.scrollTo(0, y);
+    };
+    view.querySelector("#luHist").onclick = async () => {
+      try { hist = await store.listMatches(); } catch (e) { return toast("불러오기 실패: " + e.message); }
+      const y = window.scrollY; rerender(); window.scrollTo(0, y);
+    };
     const run = () => {
+      if (dayRows().length && !st.result.savedAt && !confirm("입력한 스코어가 아직 저장되지 않았어요. 새로 짜면 스코어가 지워져요. 계속할까요?")) return;
       const names = st.people.filter((p) => p.on).map((p) => p.name);
       if (new Set(names).size !== names.length) return toast("같은 이름이 두 번 있어요. 게스트 이름을 바꿔 주세요.");
       build(); rerender();
