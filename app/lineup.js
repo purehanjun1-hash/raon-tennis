@@ -437,7 +437,7 @@
     const S = SORTS[v.by] || SORTS.rate;
     const filtered = ranks.length < all.length;
     return {
-      date: st.date, matches: dayRows(), ranks, total: all.length,
+      date: st.date, matches: [], nGames: dayRows().length, ranks, total: all.length,
       label: filtered ? `${all.length}명 중 ${ranks.length}명 · ${S.label} 기준` : (v.by !== "rate" ? `${S.label} 기준` : ""),
       isGuest: isGuestName,
     };

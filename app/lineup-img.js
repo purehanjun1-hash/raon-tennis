@@ -193,7 +193,7 @@
     font(ctx, 30, 700); ctx.globalAlpha = .85; ctx.fillText("RAON TENNIS", PAD + 4, 86); ctx.globalAlpha = 1;
     font(ctx, 64, 800); ctx.fillText("🏆 오늘의 결과", PAD, 166);
     font(ctx, 34, 500);
-    ctx.fillText([dateLabel(data.date), `${m.length}경기`, `${data.total || rk.length}명`].filter(Boolean).join("  ·  "), PAD + 4, 222);
+    ctx.fillText([dateLabel(data.date), `${data.nGames != null ? data.nGames : m.length}경기`, `${data.total || rk.length}명`].filter(Boolean).join("  ·  "), PAD + 4, 222);
     let y = 300;
 
     // 경기 스코어
