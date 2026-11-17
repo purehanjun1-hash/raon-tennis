@@ -305,6 +305,30 @@
   }
 
   // 새로 받은 카톡 알림을 AI 분석 (자동 또는 버튼)
+  // 연결해 둔 카톡 알림이 3일 넘게 안 들어오면 화면 위에 경고 (MacroDroid 꺼짐·체험 종료 등)
+  const ALIVE_DAYS = 3, HUSH_KEY = "raon_inbox_warn_hush";
+  async function checkInboxAlive(last) {
+    const old = document.getElementById("inboxWarn"); if (old) old.remove();
+    let cfg;
+    try { cfg = await store.getNotifyConfig(); } catch (e) { return; }
+    if (!cfg || !cfg.token_hash) return; // 연결 안 했으면 경고 안 함
+    const ref = Date.parse(last || cfg.updated_at || 0);
+    const days = (Date.now() - ref) / 86400e3;
+    if (!(days > ALIVE_DAYS)) return;
+    try { if (localStorage.getItem(HUSH_KEY) === todayKST()) return; } catch (e) { /* 무시 */ }
+    const bar = document.createElement("div");
+    bar.id = "inboxWarn"; bar.className = "warnbar";
+    bar.innerHTML = `<span>⚠ 카톡 알림이 <b>${Math.floor(days)}일째</b> 안 들어와요. MacroDroid '라온 알림'이 켜져 있는지 확인해 주세요.</span>
+      <button type="button" class="smallbtn" data-warn="go">확인하기</button><button type="button" class="warnx" data-warn="hush" aria-label="오늘은 그만 보기">✕</button>`;
+    bar.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-warn]"); if (!b) return;
+      e.stopPropagation();
+      if (b.dataset.warn === "hush") { try { localStorage.setItem(HUSH_KEY, todayKST()); } catch (er) { /* 무시 */ } bar.remove(); return; }
+      state.tab = "settings"; render();
+    });
+    document.querySelector(".topbar").after(bar);
+  }
+
   let inboxChecking = false, inboxCheckedAt = 0;
   async function analyzeInbox(auto) {
     if (store.mode === "local" || imp.busy || inboxChecking) return;
@@ -1032,7 +1056,7 @@
     if (store.mode !== "local") {
       const check = async () => {
         if (Date.now() - inboxCheckedAt < 60000) return;
-        try { const s2 = await store.inboxStats(); state.inboxNew = s2.newCount; } catch (e) { return; }
+        try { const s2 = await store.inboxStats(); state.inboxNew = s2.newCount; checkInboxAlive(s2.last); } catch (e) { return; }
         if (state.inboxNew && autoInbox()) analyzeInbox(true);
         else if (state.tab === "import") renderImport();
       };
