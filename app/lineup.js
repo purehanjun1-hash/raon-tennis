@@ -38,7 +38,7 @@
       const saved = (s.people || []).filter((p) => p.guest && !/^게스트\d$/.test(p.id));
       const guests = saved.length ? saved.map((o) => keep(person(o.id, o.name || "게스트", o.g === "여" ? "여" : "남", true), o)) : d.people.filter((p) => p.guest);
       d.people = members.concat(guests);
-      ["courts", "games", "start", "len", "gap", "prio", "result"].forEach((k) => { if (s[k] != null) d[k] = s[k]; });
+      ["courts", "games", "start", "len", "gap", "prio", "result", "view"].forEach((k) => { if (s[k] != null) d[k] = s[k]; });
       d.date = todayKST(); // 날짜는 열 때마다 오늘로 (바꿀 수 있음)
       if (s.result && s.date) d.date = s.date;
       return d;
@@ -157,6 +157,59 @@
     const g = st.people.some((p) => p.guest && p.name === name) && !st.people.some((p) => !p.guest && p.name === name);
     return `<span class="${g ? "nm-g" : "nm-m"}">${esc(name)}</span>`;
   };
+  // ---------- 결과 골라 보기 (상위 N명 · 기준 · 회원/게스트 · 기간) ----------
+  const VW0 = { top: 0, by: "rate", who: "all", period: "all" };
+  const vw = (k) => Object.assign({}, VW0, (st.view || {})[k]);
+  const isGuestName = (name) => st.people.some((p) => p.guest && p.name === name) && !st.people.some((p) => !p.guest && p.name === name);
+  const rate = (x) => (x.n ? x.w / x.n : 0);
+  const SORTS = {
+    rate: { label: "승률", key: (x) => [rate(x), x.gf - x.ga, x.w] },
+    win: { label: "승수", key: (x) => [x.w, rate(x), x.gf - x.ga] },
+    diff: { label: "득실", key: (x) => [x.gf - x.ga, rate(x), x.w] },
+    gf: { label: "득점", key: (x) => [x.gf, x.gf - x.ga, x.w] },
+    n: { label: "경기 수", key: (x) => [x.n, x.w, rate(x)] },
+  };
+  const cmpKey = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
+  function periodRows(rows, period) {
+    if (period === "all") return rows;
+    const t = todayKST();
+    let from;
+    if (period === "year") from = t.slice(0, 4) + "-01-01";
+    else { const d = new Date(t + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() - Number(period)); from = d.toISOString().slice(0, 10); }
+    return rows.filter((r) => String(r.play_date) >= from);
+  }
+  // 정렬·거르기·상위 N명 (N등과 동점인 사람은 함께 보여 줌). 반환: [{...x, rank}]
+  function pickView(list, v) {
+    const S = SORTS[v.by] || SORTS.rate;
+    let l = list.filter((x) => v.who === "all" || (v.who === "guest") === isGuestName(x.name));
+    l = l.map((x) => ({ x, k: S.key(x) })).sort((a, b) => cmpKey(a.k, b.k));
+    l.forEach((o, i) => { o.rank = i && cmpKey(l[i - 1].k, o.k) === 0 ? l[i - 1].rank : i + 1; });
+    const n = Number(v.top);
+    if (n > 0) l = l.filter((o) => o.rank <= n);
+    else if (n < 0 && l.length > -n) { const bk = l[l.length + n].k; l = l.filter((o) => cmpKey(bk, o.k) <= 0); } // 하위 N명 (경계 동점 포함)
+    return l.map((o) => Object.assign({}, o.x, { rank: o.rank }));
+  }
+  function viewBar(k, withPeriod) {
+    const v = vw(k);
+    const sel = (f, opts) => `<select data-lu-vw="${k}.${f}">${opts.map(([val, lab]) => `<option value="${val}" ${String(v[f]) === String(val) ? "selected" : ""}>${lab}</option>`).join("")}</select>`;
+    return `<div class="lu-vbar">
+      ${sel("top", [[0, "전체 보기"], [3, "상위 3명"], [5, "상위 5명"], [10, "상위 10명"], [-3, "하위 3명"]])}
+      ${sel("by", Object.entries(SORTS).map(([key, o]) => [key, o.label + " 순"]))}
+      ${sel("who", [["all", "회원+게스트"], ["member", "회원만"], ["guest", "게스트만"]])}
+      ${withPeriod ? sel("period", [["all", "전체 기간"], ["1", "최근 1개월"], ["3", "최근 3개월"], ["6", "최근 6개월"], ["year", "올해"]]) : ""}
+    </div>`;
+  }
+  function viewTable(rows, k, withPeriod) {
+    const v = vw(k);
+    const list = tally(withPeriod ? periodRows(rows, v.period) : rows);
+    const shown = pickView(list, v);
+    const medal = (r) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : r);
+    if (!list.length) return viewBar(k, withPeriod) + `<div class="note">${withPeriod && v.period !== "all" ? "이 기간에는 기록이 없어요." : "아직 스코어가 없어요."}</div>`;
+    if (!shown.length) return viewBar(k, withPeriod) + `<div class="note">조건에 맞는 사람이 없어요.</div>`;
+    return viewBar(k, withPeriod) + `<table class="lu-tbl"><thead><tr><th>순위</th><th>이름</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득실</th></tr></thead><tbody>
+      ${shown.map((x) => `<tr><td>${medal(x.rank)}</td><td>${nm(x.name)}</td><td>${x.n}</td><td>${x.w}</td><td>${x.d}</td><td>${x.l}</td><td><b>${pct(x)}</b></td><td>${diff(x)}</td></tr>`).join("")}</tbody></table>
+      ${shown.length < list.length ? `<p class="note">${list.length}명 중 ${shown.length}명 보는 중 · ${SORTS[v.by] ? SORTS[v.by].label : "승률"} 기준</p>` : ""}`;
+  }
   function tableHtml(list) {
     if (!list.length) return `<div class="note">아직 스코어가 없어요.</div>`;
     return `<table class="lu-tbl"><thead><tr><th>이름</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득실</th></tr></thead><tbody>
@@ -226,14 +279,14 @@
       </div>`).join("")}
       <div class="card"><p class="step">사람별 게임 수</p><div class="lu-count">${r.count.map((c) => `<span>${nm(c.name)} <b>${c.n}</b></span>`).join("")}</div></div>
       <div class="card"><p class="step">📊 오늘 결과 <span class="lu-sum">스코어 넣은 ${dayRows().length}경기</span></p>
-        ${tableHtml(tally(dayRows()))}
+        ${viewTable(dayRows(), "d", false)}
         <div class="btns"><button class="btn att" id="luSave" ${dayRows().length ? "" : "disabled"}>${r.savedAt ? "✓ 저장됨 · 다시 저장" : "오늘 결과 기록에 저장"}</button></div>
         <p class="note">저장하면 누적 기록에 들어가요. 같은 날짜로 다시 저장하면 그날 기록을 새로 덮어써요.</p>
       </div>
       <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button><button class="btn ghost" data-lu-copy="1">💬 글로 복사</button></div>
       <div class="btns"><button class="btn primary" data-lu-img="1">🖼 그림으로 카톡에 보내기</button></div>` : "";
     const histHtml = `<div class="section-title"><span>🏆 누적 기록</span><button class="smallbtn" id="luHist">${hist ? "새로고침" : "불러오기"}</button></div>
-      <div class="card">${hist ? (hist.length ? `<p class="note" style="margin-top:0">${esc(hist[0].play_date)} ~ ${esc(hist[hist.length - 1].play_date)} · ${new Set(hist.map((m) => m.play_date)).size}일 · ${hist.length}경기</p>${tableHtml(tally(hist))}` : `<div class="note">저장된 기록이 아직 없어요.</div>`) : `<div class="note">'불러오기'를 누르면 지금까지 저장한 경기 기록을 사람별로 모아 보여 줘요.</div>`}</div>`;
+      <div class="card">${hist ? (hist.length ? `<p class="note" style="margin-top:0">${esc(hist[0].play_date)} ~ ${esc(hist[hist.length - 1].play_date)} · ${new Set(hist.map((m) => m.play_date)).size}일 · ${hist.length}경기</p>${viewTable(hist, "h", true)}` : `<div class="note">저장된 기록이 아직 없어요.</div>`) : `<div class="note">'불러오기'를 누르면 지금까지 저장한 경기 기록을 사람별로 모아 보여 줘요.</div>`}</div>`;
 
     view.innerHTML = `
       <div class="card">
@@ -318,6 +371,11 @@
       save(); rerender(); window.scrollTo(0, 0);
       toast("리셋했어요. 오늘 선수를 다시 골라 주세요.");
     };
+    view.querySelectorAll("[data-lu-vw]").forEach((el) => el.onchange = () => {
+      const [k, f] = el.dataset.luVw.split(".");
+      st.view = st.view || {}; st.view[k] = Object.assign(vw(k), { [f]: el.value });
+      save(); const y = window.scrollY; rerender(); window.scrollTo(0, y);
+    });
     const nb = view.querySelector("#luNone"); if (nb) nb.onclick = () => keepY(() => { st.people.forEach((p) => { p.on = false; }); });
     const store = ui && ui.store;
     view.querySelectorAll("[data-lu-sc]").forEach((el) => el.onchange = () => {
