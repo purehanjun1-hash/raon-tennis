@@ -488,15 +488,17 @@ Claude Code는 새로운 개발 작업을 시작할 때 반드시 이 문서를 
 - [x] DB 테이블: venues, reservations, reservation_history, message_imports (users는 Phase 4에서 Supabase 로그인 계정과 연결)
 - [x] 체험 모드로 브라우저 테스트 완료: 등록, 겹침 차단(신규·수정 모두), 이어지는 시간(10~12시 뒤 12~14시) 허용, 종료<시작 차단, 수정, 취소, 이력 표시, 목록·설정 화면
 
+### Phase 1 상태: **완료** (남은 작은 일만 아래에)
+
 ### Phase 1 남은 것
 - [x] Supabase 프로젝트 `raon-tennis` 생성 (도쿄 리전 ap-northeast-1, 무료 플랜). 무료 2개 제한 때문에 `electalk-dev`를 일시정지함(2026-11-17, 최대 1년 안에 재개 가능)
 - [x] `supabase/schema.sql` 실행 완료 + DB 자체 시험 통과(겹침 차단, 이어지는 시간 허용, 이력 등록/수정/취소 기록, 시험 데이터는 롤백)
 - [x] 보안: Supabase '새 사용자 가입 허용' 끔 → 관리자가 대시보드에서 만든 계정만 로그인 가능
 - [x] 관리자 계정 만들기 완료 (총무님이 직접 입력). 로그인 없이 API로 읽으면 빈 결과 확인(RLS 작동)
 - [x] `app/config.js`에 Supabase URL과 publishable(공개용) 키 입력. supabase-js 2.100.0 사용
-- [ ] 서버 모드로 앱에서 로그인·등록·수정·취소 테스트
+- [x] 서버 모드로 폰에서 로그인·예약 등록 확인. (수정·취소는 DB 시험과 체험 모드에서 확인됨)
 - [x] GitHub Pages 배포 완료: https://purehanjun1-hash.github.io/raon-tennis/ (저장소 github.com/purehanjun1-hash/raon-tennis, 공개). `main`에 push하면 `.github/workflows/pages.yml`이 `app/` 폴더를 자동 배포
-- [ ] 총무님 폰(갤럭시)에서 접속·로그인·홈 화면에 추가 테스트
+- [x] 총무님 폰(갤럭시)에서 접속·로그인·예약 등록 확인 (2026-11-17, 총무님 "잘 돼")
 - [ ] 장소별 실제 코트 번호 입력 (설정 > 장소 관리)
 - [x] 실제 주소에서 service worker 등록·manifest·아이콘 정상 확인
 
