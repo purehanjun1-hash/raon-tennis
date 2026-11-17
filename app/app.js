@@ -218,6 +218,17 @@
         <div class="field" style="margin-bottom:6px"><input id="meName" value="${esc(me())}" placeholder="예: 유환준"></div>
         <p class="note">달력의 빨간 점(내 참석)은 이 이름으로 저장·표시돼요.</p>
       </div>
+      ${store.mode === "local" ? "" : `
+      <div class="section-title"><span>📲 카톡 알림 자동 수집 (갤럭시)</span></div>
+      <div class="card">
+        <p class="note" style="margin-top:0">갤럭시에 뜨는 <b>라온 단톡방 알림</b>을 자동으로 받아, 앱을 열면 예약 관련 글만 AI가 분석해 <b>제안</b>으로 보여 줘요. (승인은 지금처럼 직접)</p>
+        <div class="field"><label>라온 단톡방 이름 (카톡 방 이름에 들어 있는 글자)</label><input id="roomName" placeholder="예: 라온" value=""></div>
+        <div class="stat" id="inboxStat">불러오는 중…</div>
+        <label class="chkline"><input type="checkbox" id="autoInbox" ${autoInbox() ? "checked" : ""}> 앱을 열 때 새 알림을 자동으로 AI 분석</label>
+        <div class="btns"><button class="btn ghost" id="newToken">🔑 연결 코드 새로 만들기</button></div>
+        <div id="tokenBox"></div>
+        <p class="note">폰 설정은 <b>MacroDroid</b> 앱으로 해요. 연결 코드를 만든 뒤 안내대로 따라 하세요.</p>
+      </div>`}
       <div class="section-title"><span>계정 · 데이터</span></div>
       <div class="card">
         ${store.mode === "local"
@@ -229,6 +240,106 @@
     `;
     const mn = $("#meName"); if (mn) mn.onchange = () => { const v = mn.value.trim(); if (!v) return; try { localStorage.setItem(ME_KEY, v); } catch (e) { /* 저장 불가 */ } toast("이름을 저장했어요."); };
     const lo = $("#logout"); if (lo) lo.onclick = async () => { await store.logout(); location.reload(); };
+    if (store.mode !== "local") bindNotify();
+  }
+
+  // ---------- 카톡 알림 자동 수집 (Phase 5) ----------
+  const AUTO_KEY = "raon_auto_inbox";
+  const autoInbox = () => { try { return localStorage.getItem(AUTO_KEY) !== "0"; } catch (e) { return true; } };
+  const fmtKST = (iso) => new Date(Date.parse(iso) + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " ");
+  async function sha256hex(t) {
+    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  async function bindNotify() {
+    const rn = $("#roomName"), st = $("#inboxStat");
+    let cfg = { room_name: "", token_hash: "" };
+    try {
+      cfg = await store.getNotifyConfig();
+      const s2 = await store.inboxStats();
+      state.inboxNew = s2.newCount;
+      if (st) st.innerHTML = `연결 코드: <b>${cfg.token_hash ? "있음" : "아직 없음"}</b> · 마지막 수신: <b>${s2.last ? esc(fmtKST(s2.last)) : "없음"}</b> · 분석 기다리는 메시지 <b>${s2.newCount}</b>개`;
+    } catch (e) { if (st) st.textContent = "불러오지 못했어요: " + e.message + " (서버 설정 SQL이 필요할 수 있어요)"; }
+    if (rn) {
+      rn.value = cfg.room_name || "";
+      rn.onchange = async () => {
+        try { await store.setNotifyConfig({ room_name: rn.value.trim() }); toast("단톡방 이름을 저장했어요."); } catch (e) { toast(e.message); }
+      };
+    }
+    const ai = $("#autoInbox"); if (ai) ai.onchange = () => { try { localStorage.setItem(AUTO_KEY, ai.checked ? "1" : "0"); } catch (e) { /* 저장 불가 */ } };
+    const nt = $("#newToken");
+    if (nt) nt.onclick = async () => {
+      if (!(rn && rn.value.trim())) { toast("먼저 라온 단톡방 이름을 넣어 주세요."); if (rn) rn.focus(); return; }
+      if (cfg.token_hash && !confirm("새 코드를 만들면 예전 코드는 더 이상 쓸 수 없어요. 폰 MacroDroid의 주소도 새로 바꿔야 해요. 계속할까요?")) return;
+      const bytes = crypto.getRandomValues(new Uint8Array(18));
+      const token = [...bytes].map((x) => x.toString(16).padStart(2, "0")).join("");
+      try {
+        await store.setNotifyConfig({ room_name: rn.value.trim(), token_hash: await sha256hex(token) });
+        cfg.token_hash = "set";
+      } catch (e) { return toast(e.message); }
+      const url = `${store.notifyUrl()}?token=${token}`;
+      $("#tokenBox").innerHTML = `<div class="tokenbox">
+        <p class="step" style="margin-top:0">연결 주소 (MacroDroid에 넣을 주소)</p>
+        <div class="tokenurl">${esc(url)}</div>
+        <div class="btns"><button class="btn primary" id="copyUrl">📋 연결 주소 복사</button><button class="btn ghost" id="testUrl">연결 시험</button></div>
+        <p class="note">⚠ 이 주소는 지금만 보여요. 다른 사람에게 보내지 마세요. (잃어버리면 새로 만들면 돼요)</p>
+        <ol class="howto">
+          <li>Play 스토어에서 <b>MacroDroid</b> 설치 → 열기</li>
+          <li><b>매크로 추가</b> → 트리거 <b>＋</b> → <b>기기 이벤트(또는 알림)</b> → <b>알림</b> → <b>알림 수신</b> → 앱 <b>카카오톡</b> 선택 → 알림 접근 권한 허용</li>
+          <li>액션 <b>＋</b> → <b>웹 상호작용(인터넷)</b> → <b>HTTP 요청</b> → 방식 <b>POST</b> → URL에 위 주소 붙여넣기</li>
+          <li>같은 화면의 <b>쿼리 매개변수</b>(Query parameters)에 3개 추가:<br>
+            <code>title</code> = (… 눌러) <b>알림 제목</b><br><code>text</code> = <b>알림 텍스트</b><br><code>sub</code> = <b>알림 서브텍스트</b></li>
+          <li>매크로 이름 "라온 알림" → 저장. 단톡방에 글이 오면 위 '마지막 수신' 시각이 바뀌어요.</li>
+        </ol>
+      </div>`;
+      $("#copyUrl").onclick = async () => {
+        try { await navigator.clipboard.writeText(url); toast("연결 주소를 복사했어요."); } catch (e) { window.prompt("길게 눌러 복사하세요.", url); }
+      };
+      $("#testUrl").onclick = async () => {
+        try {
+          const r = await fetch(url + "&test=1", { method: "POST" }).then((x) => x.json());
+          toast(r.ok ? `연결 OK · 단톡방 이름: ${r.room || "(없음)"}` : "연결 실패: " + (r.error || ""));
+        } catch (e) { toast("연결 실패: " + e.message); }
+      };
+    };
+  }
+
+  // 새로 받은 카톡 알림을 AI 분석 (자동 또는 버튼)
+  let inboxChecking = false, inboxCheckedAt = 0;
+  async function analyzeInbox(auto) {
+    if (store.mode === "local" || imp.busy || inboxChecking) return;
+    inboxChecking = true;
+    try {
+      let rows;
+      try { rows = await store.listInbox(); } catch (e) { if (!auto) toast(e.message); return; }
+      state.inboxNew = rows.length;
+      if (!rows.length) { if (!auto) toast("새로 받은 카톡 알림이 없어요."); return; }
+      imp.fileName = "카톡 알림 " + fmtKST(rows[rows.length - 1].received_at);
+      imp.messages = rows.map((r, i) => ({ id: i, sent_at: fmtKST(r.received_at), author: r.sender || "(보낸 사람 모름)", text: r.body }));
+      imp.fromDate = imp.messages[0].sent_at.slice(0, 10);
+      imp.resume = null; imp.error = "";
+      const cand = candidates();
+      if (!cand.length) {
+        await store.markInbox(rows.map((r) => r.id)); state.inboxNew = 0;
+        if (!auto) toast("새 알림 중 예약 관련 글은 없었어요.");
+        if (state.tab === "import") renderImport();
+        return;
+      }
+      if (auto) toast(`카톡 알림 ${cand.length}개를 AI가 분석하고 있어요…`);
+      await runAnalysis();
+      if (!imp.error && !imp.resume) { await store.markInbox(rows.map((r) => r.id)); state.inboxNew = 0; }
+      render();
+    } finally { inboxChecking = false; inboxCheckedAt = Date.now(); }
+  }
+  function inboxCard() {
+    if (store.mode === "local") return "";
+    const n = state.inboxNew || 0;
+    return `<div class="card">
+      <p class="step">📲 카톡 알림으로 받은 메시지</p>
+      <div class="stat">분석 기다리는 새 메시지 <b>${n}</b>개</div>
+      <div class="btns"><button class="btn ${n ? "primary" : "ghost"}" id="inboxRun" ${imp.busy ? "disabled" : ""}>${imp.busy ? "분석 중…" : "📲 새 알림 지금 분석하기"}</button></div>
+      <p class="note">설정 → '카톡 알림 자동 수집'에서 연결하면, 갤럭시에 뜬 라온 단톡방 알림이 여기로 들어와요.</p>
+    </div>`;
   }
 
   // ---------- 팝업(시트) ----------
@@ -572,7 +683,7 @@
     }
     const cand = imp.messages.length ? candidates() : [];
     const pending = imp.proposals.filter((p) => p.state === "pending");
-    view.innerHTML = boardCard() + `
+    view.innerHTML = inboxCard() + boardCard() + `
       <div class="card">
         <p class="step">1단계 · 카카오톡 대화 파일 고르기</p>
         <label class="filebtn">📄 ${imp.messages.length ? esc(imp.fileName) + " (다시 고르기)" : "대화 내보내기 TXT 파일 선택"}<input type="file" id="kakaoFile" accept=".txt,text/plain"></label>
@@ -602,6 +713,7 @@
       ${imp.proposals.map(propCard).join("")}` : ""}
     `;
     bindBoard();
+    const ir = $("#inboxRun"); if (ir) ir.onclick = () => analyzeInbox(false);
     const fi = $("#kakaoFile");
     if (fi) fi.onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
@@ -676,12 +788,13 @@
     }
   }
 
+  const rImp = () => { if (state.tab === "import") renderImport(); };
   async function runAnalysis() {
     const rs = resumeInfo();
     const cand = rs ? candidates().filter((m) => m.id > rs.lastId) : candidates();
     if (!cand.length || imp.busy) return;
     const runId = rs ? rs.run : Date.now();
-    imp.busy = true; imp.error = ""; imp.progress = ""; renderImport();
+    imp.busy = true; imp.error = ""; imp.progress = ""; rImp();
     let importId = null;
     try { importId = await store.createImport(imp.fileName); } catch (e) { /* 기록 실패해도 분석은 진행 */ }
     const venues = state.venues.map((v) => ({ id: v.id, name: v.venue_name, courts: v.court_information || [] }));
@@ -722,7 +835,7 @@
       while (queue.length) {
         const chunk = queue.shift();
         imp.progress = `(${done}/${cand.length})`;
-        renderImport();
+        rImp();
         let res;
         try {
           res = await store.analyze({
@@ -734,7 +847,7 @@
           // AI 서버가 바쁨/요청 많음: 기다렸다가 같은 묶음 다시
           if ((e.status === 429 || e.status === 503) && waits < 6) {
             waits++; queue.unshift(chunk);
-            imp.progress = `(${done}/${cand.length}) 잠시 기다리는 중…`; renderImport();
+            imp.progress = `(${done}/${cand.length}) 잠시 기다리는 중…`; rImp();
             await sleep(30000); continue;
           }
           // 시간 초과·응답 너무 김 등: 묶음을 반으로 나눠 다시 시도
@@ -773,7 +886,7 @@
       await store.updateImport(importId, "오류: " + e.message);
       publish();
     } finally {
-      imp.busy = false; imp.progress = ""; renderImport();
+      imp.busy = false; imp.progress = ""; rImp();
     }
   }
 
@@ -877,6 +990,8 @@
 
   function render() {
     document.querySelectorAll(".bottomnav button, .topicon").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
+    const ib = document.querySelector('.bottomnav [data-tab="import"]');
+    if (ib) { const n = imp.proposals.filter((p) => p.state === "pending").length; ib.dataset.count = n ? String(n) : ""; }
     $("#fab").classList.toggle("hidden", state.tab === "settings" || state.tab === "import" || state.tab === "lineup");
     if (state.tab === "lineup") return window.RaonLineup.render(view, { toast, store });
     if (state.tab === "calendar") renderCalendar();
@@ -914,6 +1029,16 @@
     if (needsLogin) return renderLogin();
     await reload();
     render();
+    if (store.mode !== "local") {
+      const check = async () => {
+        if (Date.now() - inboxCheckedAt < 60000) return;
+        try { const s2 = await store.inboxStats(); state.inboxNew = s2.newCount; } catch (e) { return; }
+        if (state.inboxNew && autoInbox()) analyzeInbox(true);
+        else if (state.tab === "import") renderImport();
+      };
+      check();
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+    }
   })();
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {

@@ -292,3 +292,13 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 88px; }
 .lu-ov-img img { width: 100%; display: block; }
 .lu-ov-btns { display: grid; gap: 8px; margin-top: 10px; }
 .lu-ov-btns a.btn { display: block; text-align: center; text-decoration: none; box-sizing: border-box; }
+
+/* 카톡 알림 자동 수집 */
+.chkline { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; font-size: 15px; }
+.chkline input { width: 20px; height: 20px; }
+.tokenbox { margin-top: 12px; padding: 12px; border: 2px dashed var(--brand); border-radius: 12px; background: var(--brand-soft); }
+.tokenurl { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; background: #fff; border-radius: 8px; padding: 8px; }
+.howto { padding-left: 20px; font-size: 14px; line-height: 1.6; margin: 8px 0 0; }
+.howto code { background: #fff; border-radius: 4px; padding: 0 4px; }
+.bottomnav button { position: relative; }
+.bottomnav button[data-count]:not([data-count=""])::after { content: attr(data-count); position: absolute; top: 4px; right: calc(50% - 26px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--att); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }

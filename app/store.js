@@ -152,6 +152,12 @@
       this._save(d);
     }
     async analyze() { throw new Error("체험 모드에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결해야 해요."); }
+    async getNotifyConfig() { return { room_name: "", token_hash: "" }; }
+    async setNotifyConfig() { throw new Error("체험 모드에서는 카톡 알림 수집을 쓸 수 없어요."); }
+    async listInbox() { return []; }
+    async inboxStats() { return { last: null, newCount: 0 }; }
+    async markInbox() {}
+    notifyUrl() { return ""; }
     async createImport() { return null; }
     async updateImport() {}
   }
@@ -160,6 +166,7 @@
   class SupabaseStore {
     constructor(url, key) {
       this.mode = "supabase";
+      this.url = url;
       this.sb = window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } });
     }
     _check(res) {
@@ -229,6 +236,24 @@
       }
       return data;
     }
+    // ---- 카톡 알림 자동 수집 (Phase 5) ----
+    async getNotifyConfig() {
+      return this._check(await this.sb.from("notify_config").select("room_name, token_hash, updated_at").eq("id", 1).maybeSingle()) || { room_name: "", token_hash: "" };
+    }
+    async setNotifyConfig(patch) {
+      this._check(await this.sb.from("notify_config").upsert(Object.assign({ id: 1, updated_at: new Date().toISOString() }, patch)));
+    }
+    async listInbox() { return this._check(await this.sb.from("kakao_inbox").select("*").eq("status", "new").order("received_at").limit(500)); }
+    async inboxStats() {
+      const last = await this.sb.from("kakao_inbox").select("received_at").order("received_at", { ascending: false }).limit(1);
+      const cnt = await this.sb.from("kakao_inbox").select("id", { count: "exact", head: true }).eq("status", "new");
+      if (last.error) this._check(last);
+      return { last: last.data && last.data[0] ? last.data[0].received_at : null, newCount: cnt.count || 0 };
+    }
+    async markInbox(ids) {
+      for (let i = 0; i < ids.length; i += 200) this._check(await this.sb.from("kakao_inbox").update({ status: "done" }).in("id", ids.slice(i, i + 200)));
+    }
+    notifyUrl() { return this.url.replace(/\/$/, "") + "/functions/v1/kakao-notify"; }
     async createImport(fileName) {
       const row = this._check(await this.sb.from("message_imports").insert({ file_name: fileName, import_status: "분석 중" }).select().single());
       return row.id;
