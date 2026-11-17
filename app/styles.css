@@ -219,7 +219,7 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 88px; }
 .lu-times span { background: var(--brand-soft); color: var(--brand); border-radius: 8px; padding: 3px 8px; }
 .lu-sum { font-weight: 400; color: var(--muted); font-size: 14px; }
 .lu-quick { display: flex; gap: 8px; margin-bottom: 8px; }
-.lu-p { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); opacity: .55; }
+.lu-p { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .lu-p.on { opacity: 1; }
 .lu-p select { border: 1px solid var(--line); border-radius: 8px; padding: 5px 4px; background: #fff; font-size: 14px; }
 .lu-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -241,7 +241,7 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 88px; }
 .lu-rest { font-size: 14px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 6px; }
 .lu-count { display: flex; flex-wrap: wrap; gap: 6px; font-size: 14px; }
 .lu-count span { background: #f1f3f2; border-radius: 8px; padding: 3px 8px; }
-@media (max-width: 420px) { .topbar { padding: 12px 12px; } .topbar .badge { display: none; } .topbar h1 { font-size: 17px; } .lu-p { grid-template-columns: 1fr auto; } }
+@media (max-width: 420px) { .topbar { padding: 12px 12px; } .topbar .badge { display: none; } .topbar h1 { font-size: 17px; } }
 @media (max-width: 340px) { .topbar h1 span { display: none; } }
 
 /* 스코어 */
@@ -256,3 +256,17 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 88px; }
 .lu-tbl th, .lu-tbl td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: center; }
 .lu-tbl th { color: var(--muted); font-weight: 400; font-size: 12px; }
 .lu-tbl td:first-child, .lu-tbl th:first-child { text-align: left; }
+
+/* 회원·게스트 칸 */
+.lu-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lu-chip { border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 7px 11px; font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+.lu-chip small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.lu-chip.m.on { background: #2f6fd6; border-color: #2f6fd6; color: #fff; }
+.lu-chip.f.on { background: #c2395f; border-color: #c2395f; color: #fff; }
+.lu-chip.on small { color: rgba(255,255,255,.85); }
+.lu-chip.add { border-style: dashed; color: var(--brand); }
+.lu-when { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.lu-name select { border: 1px solid var(--line); border-radius: 8px; padding: 4px; background: #fff; font-size: 14px; flex: none; }
+.lu-gname { max-width: 130px; }
+.lu-gtag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; flex: none; }
+.lu-x { border: 0; background: #f1f3f2; border-radius: 99px; width: 30px; height: 30px; color: var(--muted); font-size: 14px; }

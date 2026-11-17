@@ -5,7 +5,11 @@
     ["류경진", "남"], ["유환준", "남"], ["권정석", "남"], ["송지수", "여"], ["김경채", "여"],
     ["김정화", "여"], ["최은미", "여"], ["최경훈", "남"], ["최명화", "여"],
   ];
+  const GUESTS = [
+    ["이혜경", "여"], ["강소희", "여"], ["최재웅", "남"], ["김성원", "남"], ["김유찬", "남"], ["허영호", "남"], ["박경희", "여"],
+  ];
   const TYPES = ["혼복", "남복", "여복"];
+  const person = (id, name, g, guest) => ({ id, name, g, guest, on: false, from: 1, to: 0 });
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const pad = (n) => String(n).padStart(2, "0");
   const toMin = (t) => { const [h, m] = String(t || "0:0").split(":").map(Number); return h * 60 + (m || 0); };
@@ -16,8 +20,8 @@
     return {
       date: todayKST(), courts: 2, games: 4, start: "18:30", len: 30, gap: 10,
       prio: ["혼복", "남복", "여복"],
-      people: MEMBERS.map(([name, g]) => ({ id: name, name, g, guest: false, on: false, from: 1, to: 0 }))
-        .concat([1, 2, 3, 4].map((i) => ({ id: "게스트" + i, name: "게스트" + i, g: "남", guest: true, on: false, from: 1, to: 0 }))),
+      people: MEMBERS.map(([name, g]) => person(name, name, g, false))
+        .concat(GUESTS.map(([name, g], i) => person("g" + (i + 1), name, g, true))),
       result: null,
     };
   }
@@ -28,7 +32,12 @@
       const s = JSON.parse(localStorage.getItem(KEY) || "null");
       if (!s) return d;
       const byId = Object.fromEntries((s.people || []).map((p) => [p.id, p]));
-      d.people = d.people.map((p) => Object.assign(p, byId[p.id] ? { on: !!byId[p.id].on, from: byId[p.id].from || 1, to: byId[p.id].to || 0, ...(p.guest ? { name: byId[p.id].name || p.name, g: byId[p.id].g || p.g } : {}) } : {}));
+      const keep = (p, o) => Object.assign(p, o ? { on: !!o.on, from: o.from || 1, to: o.to || 0 } : {});
+      const members = d.people.filter((p) => !p.guest).map((p) => keep(p, byId[p.id]));
+      // 게스트 명단은 저장된 것을 그대로 (예전 '게스트1~4'는 버리고 새 기본 명단으로)
+      const saved = (s.people || []).filter((p) => p.guest && !/^게스트\d$/.test(p.id));
+      const guests = saved.length ? saved.map((o) => keep(person(o.id, o.name || "게스트", o.g === "여" ? "여" : "남", true), o)) : d.people.filter((p) => p.guest);
+      d.people = members.concat(guests);
       ["courts", "games", "start", "len", "gap", "prio", "result"].forEach((k) => { if (s[k] != null) d[k] = s[k]; });
       d.date = todayKST(); // 날짜는 열 때마다 오늘로 (바꿀 수 있음)
       if (s.result && s.date) d.date = s.date;
@@ -178,13 +187,17 @@
     const opt = (n, v, label) => `<option value="${n}" ${String(v) === String(n) ? "selected" : ""}>${label}</option>`;
     const on = st.people.filter((p) => p.on);
     const mCnt = on.filter((p) => p.g === "남").length, fCnt = on.length - mCnt;
-    const row = (p, i) => `<div class="lu-p ${p.on ? "on" : ""}">
-        <label class="lu-name"><input type="checkbox" data-lu-on="${i}" ${p.on ? "checked" : ""}>
-          ${p.guest ? `<input class="lu-gname" data-lu-name="${i}" value="${esc(p.name)}" aria-label="게스트 이름">` : `<b>${esc(p.name)}</b>`}</label>
-        ${p.guest ? `<select data-lu-g="${i}" aria-label="성별">${opt("남", p.g, "남")}${opt("여", p.g, "여")}</select>` : `<span class="lu-g ${p.g === "남" ? "m" : "f"}">${p.g}</span>`}
-        <select data-lu-from="${i}" aria-label="몇 게임부터" ${p.on ? "" : "disabled"}>${Array.from({ length: G }, (_, k) => opt(k + 1, p.from, `${k + 1}게임부터`)).join("")}</select>
-        <select data-lu-to="${i}" aria-label="몇 게임까지" ${p.on ? "" : "disabled"}>${opt(0, p.to, "끝까지")}${Array.from({ length: G }, (_, k) => opt(k + 1, p.to, `${k + 1}게임까지`)).join("")}</select>
-      </div>`;
+    const chip = (p) => { const i = st.people.indexOf(p); return `<button type="button" class="lu-chip ${p.on ? "on" : ""} ${p.g === "남" ? "m" : "f"}" data-lu-tog="${i}">${p.on ? "✓ " : ""}${esc(p.name)}<small>${p.g}</small></button>`; };
+    const row = (p) => { const i = st.people.indexOf(p); return `<div class="lu-p on">
+        <div class="lu-name">${p.guest ? `<input class="lu-gname" data-lu-name="${i}" value="${esc(p.name)}" aria-label="게스트 이름">` : `<b>${esc(p.name)}</b>`}
+          ${p.guest ? `<select data-lu-g="${i}" aria-label="성별">${opt("남", p.g, "남")}${opt("여", p.g, "여")}</select>` : `<span class="lu-g ${p.g === "남" ? "m" : "f"}">${p.g}</span>`}
+          ${p.guest ? `<span class="lu-gtag">게스트</span>` : ""}</div>
+        <button type="button" class="lu-x" data-lu-off="${i}" aria-label="오늘 선수에서 빼기">✕</button>
+        <div class="lu-when">
+          <select data-lu-from="${i}" aria-label="몇 게임부터">${Array.from({ length: G }, (_, k) => opt(k + 1, p.from, `${k + 1}게임부터`)).join("")}</select>
+          <select data-lu-to="${i}" aria-label="몇 게임까지">${opt(0, p.to, "끝까지")}${Array.from({ length: G }, (_, k) => opt(k + 1, p.to, `${k + 1}게임까지`)).join("")}</select>
+        </div>
+      </div>`; };
     const prioSel = (i) => `<select data-lu-prio="${i}">${TYPES.map((t) => opt(t, st.prio[i], t)).join("")}${i > 0 ? opt("", st.prio[i] || "", "사용 안 함") : ""}</select>`;
     const r = st.result;
     const res = r ? `
@@ -240,10 +253,17 @@
       </div>
 
       <div class="card">
-        <p class="step">참가자 <span class="lu-sum">${on.length}명 (남 ${mCnt} · 여 ${fCnt})</span></p>
-        <div class="lu-quick"><button class="smallbtn" id="luAll">회원 전체 선택</button><button class="smallbtn" id="luNone">모두 해제</button></div>
-        ${st.people.map(row).join("")}
-        <p class="note">늦게 오는 사람은 '○게임부터', 일찍 가는 사람은 '○게임까지'로 정해 주세요. 게스트 이름은 눌러서 바꿀 수 있어요.</p>
+        <p class="step">회원 <span class="lu-sum">눌러서 오늘 선수로 올리기</span></p>
+        <div class="lu-chips">${st.people.filter((p) => !p.guest).map(chip).join("")}</div>
+        <div class="lu-quick"><button class="smallbtn" id="luAll">회원 전체 올리기</button></div>
+        <p class="step" style="margin-top:12px">게스트 <span class="lu-sum">눌러서 오늘 선수로 올리기</span></p>
+        <div class="lu-chips">${st.people.filter((p) => p.guest).map(chip).join("")}<button type="button" class="lu-chip add" id="luAddG">＋ 새 게스트</button></div>
+      </div>
+
+      <div class="card">
+        <p class="step">오늘 경기 선수 <span class="lu-sum">${on.length}명 (남 ${mCnt} · 여 ${fCnt})</span></p>
+        ${on.length ? on.map(row).join("") + `<div class="lu-quick" style="margin-top:8px"><button class="smallbtn" id="luNone">모두 빼기</button></div>` : `<div class="note">위의 회원·게스트 이름을 누르면 여기에 올라와요.</div>`}
+        <p class="note">늦게 오는 사람은 '○게임부터', 일찍 가는 사람은 '○게임까지'로 정해 주세요. 게스트는 이름·성별을 여기서 바꿀 수 있어요.</p>
         <div class="btns"><button class="btn primary" id="luRun" ${on.length < 4 ? "disabled" : ""}>${on.length < 4 ? "4명 이상 골라 주세요" : "조 짜기"}</button></div>
       </div>
       ${res}
@@ -269,13 +289,19 @@
       st.prio = p.filter((x, k) => x || k > 0); if (!st.prio[0]) st.prio[0] = "혼복";
       save(); rerender();
     });
-    view.querySelectorAll("[data-lu-on]").forEach((el) => el.onchange = () => { st.people[Number(el.dataset.luOn)].on = el.checked; save(); rerender(); });
-    view.querySelectorAll("[data-lu-name]").forEach((el) => el.onchange = () => { const v = el.value.trim(); st.people[Number(el.dataset.luName)].name = v || st.people[Number(el.dataset.luName)].id; save(); rerender(); });
-    view.querySelectorAll("[data-lu-g]").forEach((el) => el.onchange = () => { st.people[Number(el.dataset.luG)].g = el.value; save(); rerender(); });
+    const keepY = (fn) => { const y = window.scrollY; fn(); save(); rerender(); window.scrollTo(0, y); };
+    view.querySelectorAll("[data-lu-tog]").forEach((el) => el.onclick = () => keepY(() => { const p = st.people[Number(el.dataset.luTog)]; p.on = !p.on; if (p.on) { p.from = 1; p.to = 0; } }));
+    view.querySelectorAll("[data-lu-off]").forEach((el) => el.onclick = () => keepY(() => { st.people[Number(el.dataset.luOff)].on = false; }));
+    view.querySelector("#luAddG").onclick = () => keepY(() => {
+      const n = st.people.filter((p) => p.guest).length + 1;
+      st.people.push(Object.assign(person("g" + Date.now(), "새 게스트" + n, "남", true), { on: true }));
+    });
+    view.querySelectorAll("[data-lu-name]").forEach((el) => el.onchange = () => { const p = st.people[Number(el.dataset.luName)]; const v = el.value.trim(); if (v) p.name = v; keepY(() => {}); });
+    view.querySelectorAll("[data-lu-g]").forEach((el) => el.onchange = () => keepY(() => { st.people[Number(el.dataset.luG)].g = el.value; }));
     view.querySelectorAll("[data-lu-from]").forEach((el) => el.onchange = () => { const p = st.people[Number(el.dataset.luFrom)]; p.from = Number(el.value); if (p.to && p.to < p.from) p.to = p.from; save(); rerender(); });
     view.querySelectorAll("[data-lu-to]").forEach((el) => el.onchange = () => { const p = st.people[Number(el.dataset.luTo)]; p.to = Number(el.value); if (p.to && p.to < p.from) p.from = p.to; save(); rerender(); });
-    view.querySelector("#luAll").onclick = () => { st.people.forEach((p) => { if (!p.guest) p.on = true; }); save(); rerender(); };
-    view.querySelector("#luNone").onclick = () => { st.people.forEach((p) => { p.on = false; }); save(); rerender(); };
+    view.querySelector("#luAll").onclick = () => keepY(() => { st.people.forEach((p) => { if (!p.guest && !p.on) { p.on = true; p.from = 1; p.to = 0; } }); });
+    const nb = view.querySelector("#luNone"); if (nb) nb.onclick = () => keepY(() => { st.people.forEach((p) => { p.on = false; }); });
     const store = ui && ui.store;
     view.querySelectorAll("[data-lu-sc]").forEach((el) => el.onchange = () => {
       const [g, i, k] = el.dataset.luSc.split("-").map(Number);
