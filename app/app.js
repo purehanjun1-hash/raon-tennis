@@ -876,8 +876,9 @@
   $("#fab").onclick = () => openForm(null);
 
   function render() {
-    document.querySelectorAll(".bottomnav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
-    $("#fab").classList.toggle("hidden", state.tab === "settings" || state.tab === "import");
+    document.querySelectorAll(".bottomnav button, .topicon").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
+    $("#fab").classList.toggle("hidden", state.tab === "settings" || state.tab === "import" || state.tab === "lineup");
+    if (state.tab === "lineup") return window.RaonLineup.render(view, { toast });
     if (state.tab === "calendar") renderCalendar();
     else if (state.tab === "list") renderList();
     else if (state.tab === "import") renderImport();
