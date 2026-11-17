@@ -271,15 +271,14 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 88px; }
 .lu-gtag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; flex: none; }
 .lu-x { border: 0; background: #f1f3f2; border-radius: 99px; width: 30px; height: 30px; color: var(--muted); font-size: 14px; }
 
-/* 회원·게스트 글자색 */
-.nm-m { color: #1f6f4a; }
-.nm-g { color: #d9480f; }
-.lu-gname.nm-g { color: #d9480f; }
-.lu-chip.mem { color: #1f6f4a; }
-.lu-chip.gst { color: #d9480f; }
-.lu-chip.mem.on { background: #e3f1ea; border: 2px solid #1f6f4a; }
-.lu-chip.gst.on { background: #fff0e6; border: 2px solid #d9480f; }
-.lu-chip small.m { color: #2f6fd6; }
-.lu-chip small.f { color: #c2395f; }
+/* 회원·게스트 글자색: 회원 파랑, 게스트 엷은 초록 */
+.nm-m { color: #1c5fc9; }
+.nm-g { color: #3aa860; }
+.lu-gname.nm-g { color: #3aa860; }
+.lu-chip.mem { color: #1c5fc9; }
+.lu-chip.gst { color: #3aa860; }
+.lu-chip.mem.on { background: #e6eefb; border: 2px solid #1c5fc9; }
+.lu-chip.gst.on { background: #e9f7ee; border: 2px solid #3aa860; }
+.lu-chip small.m, .lu-chip small.f { color: var(--muted); }
 .lu-legend { margin: -4px 0 8px; font-weight: 700; }
 .lu-copybtn { background: #fee500; border-color: #e6cf00; font-weight: 700; color: #3c1e1e; }
