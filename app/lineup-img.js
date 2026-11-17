@@ -168,5 +168,104 @@
     return cv;
   }
 
-  window.RaonLineupImage = { draw };
+  // 오늘 결과만 (경기 스코어 + 순위표) 그림
+  // data: { date, matches:[{game_no,court_no,match_type,team_a,team_b,score_a,score_b}], ranks:[{name,rank,n,w,d,l,gf,ga}], total, label, isGuest(name) }
+  function drawResults(data) {
+    const m = data.matches || [], rk = data.ranks || [];
+    const mH = 96, rH = 62, gap = 28;
+    let H = 300 + 40;
+    if (m.length) H += 100 + m.length * mH + gap;
+    H += 150 + rk.length * rH + (data.label ? 40 : 0) + gap + 90;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    const nameColor = (n) => (data.isGuest && data.isGuest(n) ? C.gst : C.mem);
+
+    // 머리
+    const grd = ctx.createLinearGradient(0, 0, W, 260);
+    grd.addColorStop(0, "#1b5e8f"); grd.addColorStop(1, C.brand2);
+    ctx.fillStyle = grd; rr(ctx, 0, -40, W, 300, 48); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.12)";
+    ctx.beginPath(); ctx.arc(W - 90, 60, 150, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(W - 250, 250, 70, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    font(ctx, 30, 700); ctx.globalAlpha = .85; ctx.fillText("RAON TENNIS", PAD + 4, 86); ctx.globalAlpha = 1;
+    font(ctx, 64, 800); ctx.fillText("🏆 오늘의 결과", PAD, 166);
+    font(ctx, 34, 500);
+    ctx.fillText([dateLabel(data.date), `${m.length}경기`, `${data.total || rk.length}명`].filter(Boolean).join("  ·  "), PAD + 4, 222);
+    let y = 300;
+
+    // 경기 스코어
+    if (m.length) {
+      const ch = 100 + m.length * mH;
+      ctx.fillStyle = C.card; rr(ctx, PAD, y, W - PAD * 2, ch, 32); ctx.fill();
+      ctx.fillStyle = C.text; font(ctx, 36, 800); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText("🎾 경기 스코어", PAD + 32, y + 54);
+      const midX = W / 2 + 40, colW = 250;
+      m.forEach((r, k) => {
+        const ry = y + 100 + k * mH + mH / 2;
+        if (k % 2 === 0) { ctx.fillStyle = "#f6f8f7"; rr(ctx, PAD + 16, ry - mH / 2 + 6, W - PAD * 2 - 32, mH - 12, 16); ctx.fill(); }
+        const t = r.match_type || "복식";
+        const [tb, tf] = C.type[t] || C.type.복식;
+        font(ctx, 24, 700); ctx.fillStyle = C.muted; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText(`${r.game_no}게임`, PAD + 36, ry - 14);
+        pill(ctx, PAD + 36, ry + 2, t, tb, tf, 20);
+        const a = Number(r.score_a), b = Number(r.score_b);
+        const team = (arr, x, align) => {
+          const txt = arr.join(" · ");
+          fit(ctx, txt, colW, 30, 800);
+          ctx.textAlign = align; ctx.textBaseline = "middle";
+          // 이름별 색: 오른쪽 정렬이면 뒤에서부터 그림
+          const parts = []; arr.forEach((n, i) => { parts.push([n, nameColor(n)]); if (i < arr.length - 1) parts.push([" · ", C.muted]); });
+          const total = parts.reduce((s2, [tx]) => s2 + ctx.measureText(tx).width, 0);
+          let cx = align === "right" ? x - total : x;
+          ctx.textAlign = "left";
+          parts.forEach(([tx, col]) => { ctx.fillStyle = col; ctx.fillText(tx, cx, ry); cx += ctx.measureText(tx).width; });
+        };
+        team(r.team_a, midX - 90, "right");
+        team(r.team_b, midX + 90, "left");
+        font(ctx, 44, 800); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = a > b ? C.brand1 : C.muted; ctx.fillText(String(a), midX - 42, ry + 2);
+        ctx.fillStyle = C.muted; font(ctx, 34, 700); ctx.fillText(":", midX, ry);
+        font(ctx, 44, 800); ctx.fillStyle = b > a ? C.brand1 : C.muted; ctx.fillText(String(b), midX + 42, ry + 2);
+      });
+      y += ch + gap;
+    }
+
+    // 순위표
+    const th = 150 + rk.length * rH + (data.label ? 40 : 0);
+    ctx.fillStyle = C.card; rr(ctx, PAD, y, W - PAD * 2, th, 32); ctx.fill();
+    ctx.fillStyle = C.text; font(ctx, 36, 800); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText("📊 순위", PAD + 32, y + 54);
+    font(ctx, 26, 700);
+    ctx.fillStyle = C.mem; ctx.beginPath(); ctx.arc(W - PAD - 250, y + 54, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = C.text; ctx.fillText("회원", W - PAD - 232, y + 55);
+    ctx.fillStyle = C.gst; ctx.beginPath(); ctx.arc(W - PAD - 140, y + 54, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = C.text; ctx.fillText("게스트", W - PAD - 122, y + 55);
+    const cols = [["경기", 520], ["승", 610], ["무", 690], ["패", 770], ["승률", 860], ["득실", 960]];
+    font(ctx, 24, 500); ctx.fillStyle = C.muted; ctx.textAlign = "center";
+    cols.forEach(([t, x]) => ctx.fillText(t, x, y + 112));
+    rk.forEach((x, k) => {
+      const ry = y + 160 + k * rH;
+      if (k % 2 === 0) { ctx.fillStyle = "#f6f8f7"; rr(ctx, PAD + 16, ry - 28, W - PAD * 2 - 32, 56, 12); ctx.fill(); }
+      const medal = x.rank === 1 ? "🥇" : x.rank === 2 ? "🥈" : x.rank === 3 ? "🥉" : String(x.rank);
+      font(ctx, 30, 800); ctx.textAlign = "center"; ctx.fillStyle = C.text; ctx.fillText(medal, PAD + 56, ry + 1);
+      ctx.textAlign = "left"; fit(ctx, x.name, 300, 32, 800); ctx.fillStyle = nameColor(x.name); ctx.fillText(x.name, PAD + 100, ry + 1);
+      const d = x.gf - x.ga, pc = x.n ? Math.round((x.w / x.n) * 100) + "%" : "-";
+      font(ctx, 30, 700); ctx.textAlign = "center";
+      [[x.n, C.text], [x.w, C.brand1], [x.d, C.muted], [x.l, "#c03a3a"], [pc, C.text], [(d > 0 ? "+" : "") + d, d > 0 ? C.brand1 : d < 0 ? "#c03a3a" : C.muted]]
+        .forEach(([v, col], j) => { ctx.fillStyle = col; ctx.fillText(String(v), cols[j][1], ry + 1); });
+    });
+    if (data.label) {
+      ctx.fillStyle = C.muted; font(ctx, 24, 500); ctx.textAlign = "center";
+      ctx.fillText(data.label, W / 2, y + th - 30);
+    }
+
+    ctx.fillStyle = C.muted; font(ctx, 24, 500); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("라온 테니스 AI 매니저", W / 2, H - 50);
+    return cv;
+  }
+
+  window.RaonLineupImage = { draw, drawResults };
 })();

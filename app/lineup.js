@@ -281,7 +281,8 @@
       <div class="card"><p class="step">📊 오늘 결과 <span class="lu-sum">스코어 넣은 ${dayRows().length}경기</span></p>
         ${viewTable(dayRows(), "d", false)}
         <div class="btns"><button class="btn att" id="luSave" ${dayRows().length ? "" : "disabled"}>${r.savedAt ? "✓ 저장됨 · 다시 저장" : "오늘 결과 기록에 저장"}</button></div>
-        <p class="note">저장하면 누적 기록에 들어가요. 같은 날짜로 다시 저장하면 그날 기록을 새로 덮어써요.</p>
+        <div class="btns"><button class="btn primary" data-lu-img="result" ${dayRows().length ? "" : "disabled"}>🏆 오늘 결과만 그림으로 저장·보내기</button></div>
+        <p class="note">그림에는 위에서 고른 보기(예: 상위 3명)가 그대로 들어가요. 저장하면 누적 기록에 들어가요. 같은 날짜로 다시 저장하면 그날 기록을 새로 덮어써요.</p>
       </div>
       <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button><button class="btn ghost" data-lu-copy="1">💬 글로 복사</button></div>
       <div class="btns"><button class="btn primary" data-lu-img="1">🖼 그림으로 카톡에 보내기</button></div>` : "";
@@ -413,7 +414,7 @@
     };
     view.querySelector("#luRun").onclick = run;
     const ag = view.querySelector("#luAgain"); if (ag) ag.onclick = run;
-    view.querySelectorAll("[data-lu-img]").forEach((b) => b.onclick = () => openImage(toast));
+    view.querySelectorAll("[data-lu-img]").forEach((b) => b.onclick = () => openImage(toast, b.dataset.luImg));
     view.querySelectorAll("[data-lu-copy]").forEach((cp) => cp.onclick = async () => {
       const text = kakaoText();
       try { await navigator.clipboard.writeText(text); toast("복사했어요. 카톡에 붙여 넣으세요."); }
@@ -431,20 +432,32 @@
       tally: tally(dayRows()),
     };
   }
-  async function openImage(toast) {
+  function resultImageData() {
+    const v = vw("d"), all = tally(dayRows()), ranks = pickView(all, v);
+    const S = SORTS[v.by] || SORTS.rate;
+    const filtered = ranks.length < all.length;
+    return {
+      date: st.date, matches: dayRows(), ranks, total: all.length,
+      label: filtered ? `${all.length}명 중 ${ranks.length}명 · ${S.label} 기준` : (v.by !== "rate" ? `${S.label} 기준` : ""),
+      isGuest: isGuestName,
+    };
+  }
+  async function openImage(toast, kind) {
+    const isRes = kind === "result";
+    if (isRes && !dayRows().length) return toast("스코어를 먼저 넣어 주세요.");
     let blob;
     try {
-      const cv = window.RaonLineupImage.draw(imageData());
+      const cv = isRes ? window.RaonLineupImage.drawResults(resultImageData()) : window.RaonLineupImage.draw(imageData());
       blob = await new Promise((r) => cv.toBlob(r, "image/png"));
     } catch (e) { return toast("그림을 만들지 못했어요: " + e.message); }
-    const fname = `라온_조편성_${st.date || "오늘"}.png`;
+    const fname = `라온_${isRes ? "결과" : "조편성"}_${st.date || "오늘"}.png`;
     const file = new File([blob], fname, { type: "image/png" });
     const url = URL.createObjectURL(blob);
     const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
     const ov = document.createElement("div");
     ov.className = "lu-ov";
     ov.innerHTML = `<div class="lu-ov-box">
-        <div class="lu-ov-img"><img src="${url}" alt="조편성 그림"></div>
+        <div class="lu-ov-img"><img src="${url}" alt="${isRes ? "오늘 결과" : "조편성"} 그림"></div>
         <div class="lu-ov-btns">
           ${canShare ? `<button class="btn primary" data-ov="share">📤 카톡으로 보내기</button>` : ""}
           <a class="btn ${canShare ? "ghost" : "primary"}" href="${url}" download="${esc(fname)}" data-ov="save">💾 사진으로 저장</a>
@@ -459,7 +472,7 @@
       if (!b) return;
       if (b.dataset.ov === "close") return close();
       if (b.dataset.ov === "share") {
-        try { await navigator.share({ files: [file], title: "라온 조편성" }); }
+        try { await navigator.share({ files: [file], title: isRes ? "라온 오늘 결과" : "라온 조편성" }); }
         catch (err) { if (err && err.name !== "AbortError") toast("공유하지 못했어요. '사진으로 저장'을 써 주세요."); }
       }
     });
