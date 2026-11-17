@@ -406,6 +406,13 @@
       ${imp.proposals.length ? `
       <div class="section-title"><span>3단계 · AI 제안 확인 (남은 것 ${pending.length}개)</span>${pending.length ? "" : `<button class="smallbtn" id="clearProps">목록 비우기</button>`}</div>
       <p class="note">아래 제안은 아직 예약에 반영되지 않았어요. 하나씩 확인하고 <b>승인</b>해야 캘린더에 들어가요.</p>
+      ${(() => { const n = sureProps().length, o = oldProps().length; if (imp.busy || (!n && !o)) return "";
+        return `<div class="card">
+        ${o ? `<p class="note">이번 달(${Number(monthStart().slice(5, 7))}월) 이전 날짜의 지난 예약 제안 ${o}개는 등록할 필요가 없으면 한 번에 정리할 수 있어요.</p>
+        <div class="btns"><button class="btn ghost" id="dropOld">🗂 지난 예약 제안 ${o}개 모두 무시</button></div>` : ""}
+        ${n ? `<p class="note" style="margin-top:10px">이번 달 이후 예약 중 신뢰도 ${Math.round(SURE_CONF * 100)}% 이상이고 경고가 하나도 없는 <b>확정</b> 제안 ${n}개는 한꺼번에 승인할 수 있어요. 나머지는 하나씩 확인해 주세요.</p>
+        <div class="btns"><button class="btn primary" id="bulkApprove">✅ 확실한 확정 ${n}개 한꺼번에 승인</button></div>` : ""}
+        </div>`; })()}
       ${imp.proposals.map(propCard).join("")}` : ""}
     `;
     const fi = $("#kakaoFile");
@@ -422,6 +429,12 @@
     const fd = $("#fromDate"); if (fd) fd.onchange = (e) => { imp.fromDate = e.target.value || imp.fromDate; renderImport(); };
     const run = $("#runAI"); if (run) run.onclick = runAnalysis;
     const rst = $("#restartAI"); if (rst) rst.onclick = () => { if (confirm("처음부터 다시 분석할까요? (비용이 다시 들어요)")) { imp.resume = null; saveImp(); renderImport(); } };
+    const ba = $("#bulkApprove"); if (ba) ba.onclick = bulkApprove;
+    const dro = $("#dropOld"); if (dro) dro.onclick = () => {
+      const list = oldProps();
+      if (!confirm(`이번 달 이전 날짜의 제안 ${list.length}개를 모두 '무시'로 정리할까요?`)) return;
+      list.forEach((p) => { p.state = "rejected"; }); saveImp(); renderImport(); toast(`${list.length}개를 정리했어요.`);
+    };
     const cp = $("#clearProps"); if (cp) cp.onclick = () => { imp.proposals = []; saveImp(); renderImport(); };
   }
 
@@ -579,6 +592,43 @@
 
   function sourceText(p) {
     return (p.msgs || []).map((m) => `[${m.sent_at}] ${m.author}: ${m.text}`).join("\n");
+  }
+  // 한꺼번에 승인 대상: 새 예약/변경, 최종 상태 '확정', 신뢰도 높음, 경고 없음
+  const SURE_CONF = 0.8;
+  const monthStart = () => todayKST().slice(0, 8) + "01"; // 이번 달 1일
+  const propDate = (p) => { const f = propFinal(p); return (f && f.reservation_date) || p.reservation_date || ""; };
+  // 이번 달보다 앞선 날짜의 제안(지난 예약) — 등록할 필요 없음
+  const oldProps = () => imp.proposals.filter((p) => p.state === "pending" && propDate(p) && propDate(p) < monthStart());
+  function sureProps() {
+    return imp.proposals.filter((p) => {
+      if (p.state !== "pending" || (p.action !== "create" && p.action !== "update")) return false;
+      if (propDate(p) < monthStart()) return false;
+      if (typeof p.confidence !== "number" || p.confidence < SURE_CONF) return false;
+      const f = propFinal(p);
+      return f && f.status === "확정" && propProblems(p).length === 0;
+    });
+  }
+  async function bulkApprove() {
+    const list = sureProps();
+    if (!list.length) return;
+    const months = {};
+    list.forEach((p) => { const m = (propFinal(p).reservation_date || "").slice(5, 7); months[m] = (months[m] || 0) + 1; });
+    const mtxt = Object.keys(months).sort().map((m) => `${Number(m)}월 ${months[m]}개`).join(", ");
+    if (!confirm(`확실한 확정 제안 ${list.length}개(${mtxt})를 캘린더에 등록할까요?
+(등록 후에도 예약마다 수정·취소할 수 있어요.)`)) return;
+    imp.busy = true; renderImport();
+    const current = state.reservations.slice();
+    let ok = 0; const fails = [];
+    for (const p of list) {
+      try {
+        const saved = await store.saveReservation(Object.assign({}, propFinal(p), { source_message: sourceText(p), confidence: p.confidence }), current);
+        if (saved) { const i = current.findIndex((x) => x.id === saved.id); if (i >= 0) current[i] = saved; else current.push(saved); }
+        p.state = "applied"; ok++;
+      } catch (e) { fails.push(e.message); }
+    }
+    saveImp(); imp.busy = false;
+    await reload(); render();
+    toast(fails.length ? `${ok}개 등록, ${fails.length}개는 겹치는 예약 등으로 못 했어요(아래에 남아 있어요).` : `${ok}개를 캘린더에 등록했어요.`);
   }
   async function approveProp(i) {
     const p = imp.proposals[i];
