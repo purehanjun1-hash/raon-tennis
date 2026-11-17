@@ -198,9 +198,9 @@
           const sv = (k) => c.score && c.score[k] != null ? esc(c.score[k]) : "";
           return `<div class="lu-court"><span class="lu-ct t-${esc(c.type)}">${i + 1}코트 · ${c.type === "자유" ? "복식" : esc(c.type)}</span>
           <div class="lu-vs">
-            <span class="${ok && a > b ? "w" : ""}">${c.teams[0].map(esc).join(" · ")} ${tag(a, b)}</span>
+            <span class="${ok && a > b ? "w" : ""}">${c.teams[0].map(esc).join("<br>")}${ok ? "<br>" + tag(a, b) : ""}</span>
             <span class="lu-score"><input type="number" inputmode="numeric" min="0" max="99" data-lu-sc="${g.no}-${i}-0" value="${sv(0)}" aria-label="왼쪽 팀 점수"><b>:</b><input type="number" inputmode="numeric" min="0" max="99" data-lu-sc="${g.no}-${i}-1" value="${sv(1)}" aria-label="오른쪽 팀 점수"></span>
-            <span class="${ok && b > a ? "w" : ""}">${tag(b, a)} ${c.teams[1].map(esc).join(" · ")}</span>
+            <span class="${ok && b > a ? "w" : ""}">${c.teams[1].map(esc).join("<br>")}${ok ? "<br>" + tag(b, a) : ""}</span>
           </div></div>`;
         }).join("")}
         ${g.rest.length ? `<div class="lu-rest">쉼: ${g.rest.map(esc).join(", ")}</div>` : ""}
