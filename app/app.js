@@ -46,6 +46,18 @@
   };
   const myAtt = (d) => state.attendance.filter((a) => a.attend_date === d && a.member_name === me())
     .sort((a, b) => String(attView(a).start || "99").localeCompare(String(attView(b).start || "99")));
+  // 일요일은 정기 모임: 따로 저장하지 않아도 항상 참석으로 봄 (빨간 점)
+  const isSun = (d) => parse(d).getUTCDay() === 0;
+  const hasAtt = (d) => isSun(d) || myAtt(d).length > 0;
+  const sunCard = () => `<div class="res att">
+      <span class="bar"></span>
+      <span class="main">
+        <div class="t">🙋 참석 · 일요일 정기 참석</div>
+        <div class="sub">일요일은 항상 참석으로 표시돼요.</div>
+      </span>
+    </div>`;
+  // 그날의 참석 카드들: 일요일인데 따로 넣은 참석이 없으면 정기 참석 카드
+  const attCards = (d) => { const a = myAtt(d); return a.length ? a.map((x) => attCard(x)).join("") : isSun(d) ? sunCard() : ""; };
   const myAttFor = (resId) => state.attendance.find((a) => a.reservation_id === resId && a.member_name === me());
   function attCard(a, showDate) {
     const v = attView(a);
@@ -106,7 +118,7 @@
         const dt = parse(d);
         if (i === 35 && dt.getUTCMonth() !== m) break; // 6번째 줄이 필요 없으면 생략
         const list = onDate(d);
-        const att = myAtt(d).length ? `<i class="dot att"></i>` : "";
+        const att = hasAtt(d) ? `<i class="dot att"></i>` : "";
         const dots = att + list.slice(0, 4).map((r) => `<i class="dot ${sClass(r.status)}"></i>`).join("");
         const more = list.length > 4 ? `<span class="more">+${list.length - 4}</span>` : "";
         const cls = ["day", dt.getUTCMonth() !== m ? "other" : "", d === today ? "today" : "", d === state.selected ? "sel" : "", dt.getUTCDay() === 0 ? "sun" : dt.getUTCDay() === 6 ? "sat" : ""].join(" ");
@@ -122,15 +134,14 @@
       for (let i = 0; i < 7; i++) {
         const d = addDays(start, i);
         const list = onDate(d);
-        const atts = myAtt(d);
         body += `<div class="week-day"><h3 class="${d === today ? "today" : ""}">${labelDate(d)}${d === today ? " · 오늘" : ""}</h3>
-          ${atts.map((a) => attCard(a)).join("")}
+          ${attCards(d)}
           ${list.length ? list.map((r) => resCard(r)).join("") : `<div class="empty">예약 없음</div>`}</div>`;
       }
     }
 
     const sel = onDate(state.selected);
-    const selAtt = myAtt(state.selected);
+    const selAtt = attCards(state.selected);
     view.innerHTML = `
       <div class="card">
         <div class="cal-head">
@@ -147,7 +158,7 @@
       </div>
       ${state.calMode === "month" ? `
         <div class="section-title"><span>${labelDate(state.selected)} · ${esc(me())} 참석</span><button class="smallbtn" data-attadd="${state.selected}">🙋 참석 추가</button></div>
-        ${selAtt.length ? selAtt.map((a) => attCard(a)).join("") : `<div class="note" style="margin:0 0 8px">이 날은 참석 일정이 없어요.</div>`}
+        ${selAtt || `<div class="note" style="margin:0 0 8px">이 날은 참석 일정이 없어요.</div>`}
         <div class="section-title"><span>${labelDate(state.selected)} 예약 ${sel.length}건</span></div>
         ${sel.length ? sel.map((r) => resCard(r)).join("") : `<div class="empty-box">이 날은 예약이 없어요.<br>오른쪽 아래 ＋ 버튼으로 추가할 수 있어요.</div>`}` : ""}
     `;
