@@ -259,7 +259,7 @@
     const prioSel = (i) => `<select data-lu-prio="${i}">${TYPES.map((t) => opt(t, st.prio[i], t)).join("")}${i > 0 ? opt("", st.prio[i] || "", "사용 안 함") : ""}</select>`;
     const r = st.result;
     const res = r ? `
-      <div class="section-title"><span>📋 조편성 결과${st.date ? " · " + esc(st.date) : ""}</span><span class="lu-topbtns"><button class="smallbtn lu-imgbtn" data-lu-img="1">🖼 그림</button><button class="smallbtn lu-copybtn" data-lu-copy="1">💬 글</button></span></div>
+      <div class="section-title"><span>📋 조편성 결과${st.date ? " · " + esc(st.date) : ""}</span><span class="lu-topbtns"><button class="smallbtn lu-imgbtn" data-lu-img="1">🖼 그림</button></span></div>
       <p class="note lu-legend"><span class="nm-m">■ 회원</span> <span class="nm-g">■ 게스트</span></p>
       ${r.games.map((g) => `<div class="card lu-game">
         <div class="lu-gh"><b>${g.no}게임</b><span>${esc(g.time)}</span></div>
@@ -284,7 +284,7 @@
         <div class="btns"><button class="btn primary" data-lu-img="result" ${dayRows().length ? "" : "disabled"}>🏆 오늘 결과만 그림으로 저장·보내기</button></div>
         <p class="note">그림에는 위에서 고른 보기(예: 상위 3명)가 그대로 들어가요. 저장하면 누적 기록에 들어가요. 같은 날짜로 다시 저장하면 그날 기록을 새로 덮어써요.</p>
       </div>
-      <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button><button class="btn ghost" data-lu-copy="1">💬 글로 복사</button></div>
+      <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button></div>
       <div class="btns"><button class="btn primary" data-lu-img="1">🖼 그림으로 카톡에 보내기</button></div>` : "";
     const histHtml = `<div class="section-title"><span>🏆 누적 기록</span><button class="smallbtn" id="luHist">${hist ? "새로고침" : "불러오기"}</button></div>
       <div class="card">${hist ? (hist.length ? `<p class="note" style="margin-top:0">${esc(hist[0].play_date)} ~ ${esc(hist[hist.length - 1].play_date)} · ${new Set(hist.map((m) => m.play_date)).size}일 · ${hist.length}경기</p>${viewTable(hist, "h", true)}` : `<div class="note">저장된 기록이 아직 없어요.</div>`) : `<div class="note">'불러오기'를 누르면 지금까지 저장한 경기 기록을 사람별로 모아 보여 줘요.</div>`}</div>`;
