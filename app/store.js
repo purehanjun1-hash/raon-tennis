@@ -39,7 +39,7 @@
   }
 
   function pickFields(r) {
-    return {
+    const f = {
       reservation_date: r.reservation_date,
       start_time: String(r.start_time).slice(0, 5),
       end_time: String(r.end_time).slice(0, 5),
@@ -49,6 +49,10 @@
       status: r.status,
       memo: (r.memo || "").trim(),
     };
+    // AI 분석으로 들어온 예약: 원본 메시지와 신뢰도 보관
+    if (r.source_message) f.source_message = String(r.source_message);
+    if (r.confidence !== undefined && r.confidence !== null && r.confidence !== "") f.confidence = Number(r.confidence);
+    return f;
   }
   function normalize(r) {
     return Object.assign({}, r, {
@@ -116,6 +120,9 @@
     async history(id) {
       return this._load().history.filter((h) => h.reservation_id === id).sort((a, b) => b.changed_at.localeCompare(a.changed_at));
     }
+    async analyze() { throw new Error("체험 모드에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결해야 해요."); }
+    async createImport() { return null; }
+    async updateImport() {}
   }
 
   // ---------------- Supabase 모드 ----------------
@@ -165,6 +172,24 @@
     }
     async history(id) {
       return this._check(await this.sb.from("reservation_history").select("*").eq("reservation_id", id).order("changed_at", { ascending: false }));
+    }
+    // AI 분석 (서버 함수 호출). payload: { today, venues, existing, messages }
+    async analyze(payload) {
+      const { data, error } = await this.sb.functions.invoke("analyze-messages", { body: payload });
+      if (error) {
+        let msg = "AI 분석 중 오류가 났어요.";
+        try { const b = await error.context.json(); if (b && b.error) msg = b.error; } catch (e) { /* 본문 없음 */ }
+        throw new Error(msg);
+      }
+      return data;
+    }
+    async createImport(fileName) {
+      const row = this._check(await this.sb.from("message_imports").insert({ file_name: fileName, import_status: "분석 중" }).select().single());
+      return row.id;
+    }
+    async updateImport(id, status) {
+      if (!id) return;
+      await this.sb.from("message_imports").update({ import_status: status, processed_at: new Date().toISOString() }).eq("id", id);
     }
   }
 

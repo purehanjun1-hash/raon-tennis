@@ -196,11 +196,18 @@
     return `<input name="court_number" inputmode="numeric" placeholder="예: 2" value="${esc(value || "")}" required>`;
   }
 
-  function openForm(r) {
+  // opts: { title, extra: {source_message, confidence}, onSaved(saved) } - AI 제안 승인할 때 사용
+  function openForm(r, opts) {
+    opts = opts || {};
     const isEdit = !!(r && r.id);
-    const d = Object.assign({ reservation_date: state.selected, start_time: "10:00", end_time: "12:00", venue_id: (state.venues[0] || {}).id, court_number: "", reserved_by: "", status: "확정", memo: "" }, r || {});
+    // AI 제안은 빈 칸을 임의로 채우지 않음 (관리자가 직접 확인해서 넣도록)
+    const base = opts.extra
+      ? { reservation_date: "", start_time: "", end_time: "", venue_id: "", court_number: "", reserved_by: "", status: "확인 필요", memo: "" }
+      : { reservation_date: state.selected, start_time: "10:00", end_time: "12:00", venue_id: (state.venues[0] || {}).id, court_number: "", reserved_by: "", status: "확정", memo: "" };
+    const d = Object.assign({}, base);
+    Object.entries(r || {}).forEach(([k, v]) => { if (v !== null && v !== undefined) d[k] = v; });
     openSheet(`
-      <h2>${isEdit ? "예약 수정" : "예약 추가"}<button class="close" data-close>×</button></h2>
+      <h2>${opts.title || (isEdit ? "예약 수정" : "예약 추가")}<button class="close" data-close>×</button></h2>
       <form id="resForm" novalidate>
         <div id="formErr"></div>
         <div class="field"><label>날짜</label><input type="date" name="reservation_date" value="${esc(d.reservation_date)}" required></div>
@@ -209,7 +216,7 @@
           <div class="field"><label>종료 시간</label><input type="time" name="end_time" step="600" value="${esc(d.end_time)}" required></div>
         </div>
         <div class="row2">
-          <div class="field"><label>장소</label><select name="venue_id" required>${state.venues.map((v) => `<option value="${esc(v.id)}" ${v.id === d.venue_id ? "selected" : ""}>${esc(v.venue_name)}</option>`).join("")}</select></div>
+          <div class="field"><label>장소</label><select name="venue_id" required>${d.venue_id ? "" : `<option value="">선택</option>`}${state.venues.map((v) => `<option value="${esc(v.id)}" ${v.id === d.venue_id ? "selected" : ""}>${esc(v.venue_name)}</option>`).join("")}</select></div>
           <div class="field"><label>코트 번호</label><span id="courtWrap">${courtField(d.venue_id, d.court_number)}</span></div>
         </div>
         <div class="field"><label>예약자 (실제로 예약한 회원)</label><input name="reserved_by" placeholder="예: 김철수" value="${esc(d.reserved_by)}"></div>
@@ -228,13 +235,14 @@
     });
     form.onsubmit = async (e) => {
       e.preventDefault();
-      const data = Object.fromEntries(new FormData(form).entries());
+      const data = Object.assign(Object.fromEntries(new FormData(form).entries()), opts.extra || {});
       if (isEdit) data.id = d.id;
       const btn = form.querySelector("[type=submit]"); btn.disabled = true;
       try {
         const saved = await store.saveReservation(data, state.reservations);
         await reload();
         closeSheet();
+        if (opts.onSaved) { opts.onSaved(saved); toast("반영했어요."); render(); return; }
         state.selected = saved.reservation_date; state.cursor = saved.reservation_date;
         toast(isEdit ? "수정했어요." : "예약을 등록했어요.");
         render();
@@ -272,6 +280,7 @@
           <dt>예약자</dt><dd>${esc(r.reserved_by || "-")}</dd>
           <dt>비고</dt><dd>${esc(r.memo || "-")}</dd>
         </dl>
+        ${r.source_message ? `<div class="section-title" style="margin-top:12px"><span>카톡 원본 (AI 분석${r.confidence != null ? ", 신뢰도 " + Math.round(r.confidence * 100) + "%" : ""})</span></div><div class="quote">${esc(r.source_message)}</div>` : ""}
       </div>
       <div class="btns">
         <button class="btn primary" data-edit="${esc(r.id)}">수정</button>
@@ -318,6 +327,197 @@
     };
   }
 
+  // ---------- AI 분석 (카카오톡 TXT) ----------
+  const IMP_KEY = "raon_import_v1";
+  const ACT_LABEL = { create: "새 예약", update: "변경", cancel: "취소", duplicate: "이미 등록됨" };
+  const imp = { fileName: "", messages: [], fromDate: addDays(todayKST(), -14), proposals: [], busy: false, error: "", progress: "" };
+  try { const saved = JSON.parse(localStorage.getItem(IMP_KEY)); if (saved && Array.isArray(saved.proposals)) { imp.proposals = saved.proposals; imp.fileName = saved.fileName || ""; } } catch (e) { /* 저장된 것 없음 */ }
+  function saveImp() { try { localStorage.setItem(IMP_KEY, JSON.stringify({ fileName: imp.fileName, proposals: imp.proposals })); } catch (e) { /* 저장 불가 */ } }
+
+  const candidates = () => imp.messages.filter((m) => m.sent_at.slice(0, 10) >= imp.fromDate && RaonKakao.isCandidate(m, state.venues.map((v) => v.venue_name)));
+  const withWeekday = (s) => s ? `${s.slice(0, 10)}(${DOW[dow(s.slice(0, 10))]})${s.slice(10)}` : s;
+
+  function propSummary(p) {
+    const parts = [];
+    parts.push(p.reservation_date ? labelDate(p.reservation_date) : "날짜 ?");
+    parts.push(`${p.start_time || "?"}~${p.end_time || "?"}`);
+    parts.push(p.venue_id ? venueName(p.venue_id) : "장소 ?");
+    parts.push(p.court_number ? `${p.court_number}번 코트` : "코트 ?");
+    parts.push(p.reserved_by || "예약자 ?");
+    return parts.join(" · ");
+  }
+  // 승인 후 저장될 최종 값
+  function propFinal(p) {
+    const target = p.target_reservation_id ? state.reservations.find((x) => x.id === p.target_reservation_id) : null;
+    const fields = {};
+    ["reservation_date", "start_time", "end_time", "venue_id", "court_number", "reserved_by", "status"].forEach((k) => { if (p[k] !== null && p[k] !== undefined && p[k] !== "") fields[k] = p[k]; });
+    if (p.action === "cancel") return target ? Object.assign({}, target, { status: "취소" }) : null;
+    if (p.action === "update") return target ? Object.assign({}, target, fields, { id: target.id }) : null;
+    return Object.assign({ reservation_date: null, start_time: null, end_time: null, venue_id: null, court_number: null, reserved_by: null, status: "확인 필요", memo: "" }, fields);
+  }
+  function propProblems(p) {
+    const probs = [];
+    const target = p.target_reservation_id ? state.reservations.find((x) => x.id === p.target_reservation_id) : null;
+    if ((p.action === "update" || p.action === "cancel" || p.action === "duplicate") && !target) probs.push("연결할 기존 예약을 찾지 못했어요.");
+    if (p.action === "duplicate") return probs;
+    const f = propFinal(p);
+    if (f && p.action !== "cancel") {
+      const missing = [["reservation_date", "날짜"], ["start_time", "시작 시간"], ["end_time", "종료 시간"], ["venue_id", "장소"], ["court_number", "코트"]].filter(([k]) => !f[k]).map(([, n]) => n);
+      if (missing.length) probs.push("빠진 정보: " + missing.join(", "));
+      if (!f.reserved_by) probs.push("예약자가 불명확해요.");
+      if (!missing.length) {
+        const c = store.findConflict(state.reservations, f, f.id);
+        if (c) probs.push(`겹치는 예약: ${labelDate(c.reservation_date)} ${c.start_time}~${c.end_time} ${venueName(c.venue_id)} ${c.court_number}번 (${c.reserved_by || "-"})`);
+      }
+    }
+    if (p.status === "확인 필요") probs.push("AI가 '확인 필요'로 판단했어요.");
+    if (typeof p.confidence === "number" && p.confidence < 0.7) probs.push("AI 신뢰도가 낮아요.");
+    return probs;
+  }
+
+  function renderImport() {
+    if (store.mode === "local") {
+      view.innerHTML = `<div class="card"><p class="note"><b>체험 모드</b>에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결된 앱에서 사용해 주세요.</p></div>`;
+      return;
+    }
+    const cand = imp.messages.length ? candidates() : [];
+    const pending = imp.proposals.filter((p) => p.state === "pending");
+    view.innerHTML = `
+      <div class="card">
+        <p class="step">1단계 · 카카오톡 대화 파일 고르기</p>
+        <label class="filebtn">📄 ${imp.messages.length ? esc(imp.fileName) + " (다시 고르기)" : "대화 내보내기 TXT 파일 선택"}<input type="file" id="kakaoFile" accept=".txt,text/plain"></label>
+        <p class="note">카카오톡 단체방 → 메뉴(≡) → 설정(⚙) → <b>대화 내보내기</b> → <b>텍스트만 보내기</b>로 만든 파일이에요.</p>
+      </div>
+      ${imp.messages.length ? `
+      <div class="card">
+        <p class="step">2단계 · 분석할 기간</p>
+        <div class="field"><label>이 날짜 이후 메시지만</label><input type="date" id="fromDate" value="${esc(imp.fromDate)}"></div>
+        <div class="stat">전체 메시지 <b>${imp.messages.length}</b>개 중 예약 관련으로 보이는 메시지 <b>${cand.length}</b>개</div>
+        <p class="note">AI에는 예약 관련으로 보이는 메시지만 보내요. 잡담 같은 다른 대화는 보내지도, 저장하지도 않아요.</p>
+        <div class="btns"><button class="btn primary" id="runAI" ${imp.busy || !cand.length ? "disabled" : ""}>${imp.busy ? "AI가 분석하는 중… " + esc(imp.progress) : `🤖 AI로 분석하기 (${cand.length}개)`}</button></div>
+        ${imp.error ? `<div class="err" style="margin-top:10px">${esc(imp.error)}</div>` : ""}
+      </div>` : ""}
+      ${imp.proposals.length ? `
+      <div class="section-title"><span>3단계 · AI 제안 확인 (남은 것 ${pending.length}개)</span>${pending.length ? "" : `<button class="smallbtn" id="clearProps">목록 비우기</button>`}</div>
+      <p class="note">아래 제안은 아직 예약에 반영되지 않았어요. 하나씩 확인하고 <b>승인</b>해야 캘린더에 들어가요.</p>
+      ${imp.proposals.map(propCard).join("")}` : ""}
+    `;
+    const fi = $("#kakaoFile");
+    if (fi) fi.onchange = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const text = await file.text();
+      const msgs = RaonKakao.parse(text);
+      if (!msgs.length) { toast("카카오톡 대화 형식을 찾지 못했어요. 내보내기한 TXT 파일인지 확인해 주세요."); return; }
+      imp.fileName = file.name; imp.messages = msgs; imp.error = "";
+      const last = msgs[msgs.length - 1].sent_at.slice(0, 10);
+      if (imp.fromDate > last) imp.fromDate = addDays(last, -14);
+      renderImport();
+    };
+    const fd = $("#fromDate"); if (fd) fd.onchange = (e) => { imp.fromDate = e.target.value || imp.fromDate; renderImport(); };
+    const run = $("#runAI"); if (run) run.onclick = runAnalysis;
+    const cp = $("#clearProps"); if (cp) cp.onclick = () => { imp.proposals = []; saveImp(); renderImport(); };
+  }
+
+  function propCard(p, i) {
+    const f = propFinal(p);
+    const target = p.target_reservation_id ? state.reservations.find((x) => x.id === p.target_reservation_id) : null;
+    const probs = p.state === "pending" ? propProblems(p) : [];
+    const st = p.action === "cancel" ? "취소" : (f && f.status) || p.status;
+    const conf = typeof p.confidence === "number" ? `신뢰도 ${Math.round(p.confidence * 100)}%` : "";
+    const quote = (p.msgs || []).map((m) => `<b>${esc(m.author)}</b> · ${esc(withWeekday(m.sent_at))}\n${esc(m.text)}`).join("\n\n");
+    let body;
+    if (p.action === "create") body = `<div class="line">${esc(propSummary(f))}</div>`;
+    else body = `${target ? `<div class="before">기존: ${esc(summarize(target))}</div>` : ""}
+      ${p.action === "duplicate" ? `<div class="line">이미 캘린더에 있는 예약이에요.</div>` : `<div class="line">→ ${p.action === "cancel" ? "취소로 변경" : esc(propSummary(f || p))}</div>`}`;
+    let actions = "";
+    if (p.state === "pending") {
+      if (p.action === "duplicate") actions = `<div class="btns"><button class="btn ghost" data-pdone="${i}">확인했어요</button></div>`;
+      else {
+        const canApprove = f && !probs.some((x) => /빠진 정보|찾지 못|겹치는/.test(x));
+        actions = `<div class="btns3">
+          <button class="btn primary" data-papprove="${i}" ${canApprove ? "" : "disabled"}>승인</button>
+          <button class="btn ghost" data-pedit="${i}">고쳐서 승인</button>
+          <button class="btn ghost" data-preject="${i}">무시</button></div>`;
+      }
+    } else actions = `<div class="donelabel">${p.state === "applied" ? "✅ 반영됨" : p.state === "rejected" ? "무시함" : "확인함"}</div>`;
+    return `<div class="prop ${sClass(st)} ${p.state !== "pending" ? "done" : ""}">
+      <div class="top"><span class="act ${p.action}">${ACT_LABEL[p.action] || p.action}</span><span class="chip">${esc(st)}</span><span class="conf">${conf}</span></div>
+      ${body}
+      ${quote ? `<div class="quote">${quote}</div>` : ""}
+      ${probs.map((x) => `<div class="warn">⚠ ${esc(x)}</div>`).join("")}
+      ${p.reason ? `<div class="reason">AI 판단: ${esc(p.reason)}</div>` : ""}
+      ${actions}
+    </div>`;
+  }
+
+  async function runAnalysis() {
+    const cand = candidates();
+    if (!cand.length || imp.busy) return;
+    imp.busy = true; imp.error = ""; imp.progress = ""; renderImport();
+    let importId = null;
+    try { importId = await store.createImport(imp.fileName); } catch (e) { /* 기록 실패해도 분석은 진행 */ }
+    const venues = state.venues.map((v) => ({ id: v.id, name: v.venue_name, courts: v.court_information || [] }));
+    const existing = state.reservations
+      .filter((r) => r.status !== "취소" && r.reservation_date >= addDays(imp.fromDate, -7))
+      .map((r) => ({ id: r.id, date: r.reservation_date, start: r.start_time, end: r.end_time, venue_id: r.venue_id, court: r.court_number, reserved_by: r.reserved_by, status: r.status }));
+    const today = todayKST();
+    const BATCH = 40;
+    const found = [];
+    try {
+      for (let i = 0; i < cand.length; i += BATCH) {
+        const chunk = cand.slice(i, i + BATCH);
+        imp.progress = cand.length > BATCH ? `(${Math.min(i + BATCH, cand.length)}/${cand.length})` : "";
+        renderImport();
+        const res = await store.analyze({
+          today: `${today}(${DOW[dow(today)]})`,
+          venues, existing,
+          messages: chunk.map((m) => ({ id: m.id, sent_at: withWeekday(m.sent_at), author: m.author, text: m.text })),
+        });
+        (res.items || []).forEach((it) => {
+          const msgs = (it.message_ids || []).map((id) => imp.messages[id]).filter(Boolean)
+            .map((m) => ({ author: m.author, sent_at: m.sent_at, text: m.text }));
+          if (it.venue_id && !state.venues.some((v) => v.id === it.venue_id)) it.venue_id = null;
+          found.push(Object.assign({}, it, { msgs, state: "pending" }));
+        });
+      }
+      imp.proposals = found.concat(imp.proposals.filter((p) => p.state === "pending"));
+      saveImp();
+      await store.updateImport(importId, `완료: 제안 ${found.length}개`);
+      toast(found.length ? `AI 제안 ${found.length}개를 찾았어요.` : "예약 관련 내용을 찾지 못했어요.");
+    } catch (e) {
+      imp.error = e.message;
+      await store.updateImport(importId, "오류: " + e.message);
+      if (found.length) { imp.proposals = found.concat(imp.proposals); saveImp(); }
+    } finally {
+      imp.busy = false; imp.progress = ""; renderImport();
+    }
+  }
+
+  function sourceText(p) {
+    return (p.msgs || []).map((m) => `[${m.sent_at}] ${m.author}: ${m.text}`).join("\n");
+  }
+  async function approveProp(i) {
+    const p = imp.proposals[i];
+    const f = propFinal(p);
+    try {
+      await store.saveReservation(Object.assign({}, f, { source_message: sourceText(p), confidence: p.confidence }), state.reservations);
+      p.state = "applied"; saveImp(); await reload(); toast("반영했어요."); render();
+    } catch (e) { toast(e.message); }
+  }
+  function editProp(i) {
+    const p = imp.proposals[i];
+    let r = propFinal(p);
+    if (!r) { // 기존 예약을 못 찾으면 새 예약으로 등록
+      r = {};
+      ["reservation_date", "start_time", "end_time", "venue_id", "court_number", "reserved_by", "status"].forEach((k) => { r[k] = p[k]; });
+    }
+    openForm(r, {
+      title: "AI 제안 고쳐서 승인",
+      extra: { source_message: sourceText(p), confidence: p.confidence },
+      onSaved: () => { p.state = "applied"; saveImp(); },
+    });
+  }
+
   // ---------- 클릭 처리 ----------
   document.addEventListener("click", (e) => {
     const t = e.target.closest("button");
@@ -344,14 +544,19 @@
     if (ds.cancel) { if (confirm("이 예약을 취소할까요?\n(삭제되지 않고 '취소' 상태로 기록이 남아요.)")) setStatus(ds.cancel, "취소", "예약을 취소했어요."); return; }
     if (ds.restore) return setStatus(ds.restore, "확정", "취소를 되돌렸어요.");
     if (ds.venue !== undefined) return openVenueForm(ds.venue || null);
+    if (ds.papprove) return approveProp(Number(ds.papprove));
+    if (ds.pedit) return editProp(Number(ds.pedit));
+    if (ds.preject) { imp.proposals[Number(ds.preject)].state = "rejected"; saveImp(); return renderImport(); }
+    if (ds.pdone) { imp.proposals[Number(ds.pdone)].state = "seen"; saveImp(); return renderImport(); }
   });
   $("#fab").onclick = () => openForm(null);
 
   function render() {
     document.querySelectorAll(".bottomnav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
-    $("#fab").classList.toggle("hidden", state.tab === "settings");
+    $("#fab").classList.toggle("hidden", state.tab === "settings" || state.tab === "import");
     if (state.tab === "calendar") renderCalendar();
     else if (state.tab === "list") renderList();
+    else if (state.tab === "import") renderImport();
     else renderSettings();
   }
 
