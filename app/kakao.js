@@ -60,5 +60,45 @@
     return venueHit || /(예약|코트|취소|변경|연기|미뤄|미루|당겨|앞당|양도|잡았|잡아|성공|\d{1,2}\s*시|\d{1,2}:\d{2})/.test(t);
   }
 
-  window.RaonKakao = { parse, isCandidate };
+  // 카톡 게시판 '상세보기' 일정 해석 (AI 없이)
+  // 예)  🎾11/27(금) 송정/2
+  //      유환준 김정화 권정석 🌈이혜경
+  // 결과: [{ date, placeText, courts: ["2"], noCourt, people: [...], peopleText }]
+  const RE_BOARD_HEAD = /(\d{1,2})\s*\/\s*(\d{1,2})\s*\(\s*([일월화수목금토])\s*\)\s*(.*)$/;
+  function parseBoard(raw, todayStr) {
+    const today = todayStr || new Date().toISOString().slice(0, 10);
+    const ty = Number(today.slice(0, 4)), tm = Number(today.slice(5, 7));
+    const out = [];
+    let cur = null;
+    for (const line0 of String(raw).replace(/^﻿/, "").split(/\r?\n/)) {
+      const line = line0.trim();
+      if (!line) continue;
+      const m = line.match(RE_BOARD_HEAD);
+      if (m && line.indexOf(m[0]) <= 4) { // 줄 앞쪽(이모지 뒤)에 날짜가 있어야 머리줄
+        const mo = Number(m[1]), da = Number(m[2]);
+        let y = ty;
+        if (mo < tm - 6) y = ty + 1; else if (mo > tm + 6) y = ty - 1;
+        const rest = m[4].trim();
+        const noCourt = /코트\s*x/i.test(rest);
+        const [placePart, courtPart] = rest.split("/");
+        cur = {
+          date: `${y}-${pad(mo)}-${pad(da)}`,
+          placeText: noCourt ? "" : (placePart || "").trim(),
+          courts: courtPart ? (courtPart.match(/\d+/g) || []) : [],
+          noCourt, people: [], peopleText: "",
+        };
+        out.push(cur);
+        continue;
+      }
+      if (cur) {
+        const clean = line.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+        if (!clean) continue;
+        cur.peopleText = (cur.peopleText + " " + clean).trim();
+        cur.people = cur.peopleText.split(" ").filter(Boolean);
+      }
+    }
+    return out;
+  }
+
+  window.RaonKakao = { parse, isCandidate, parseBoard };
 })();

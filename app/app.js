@@ -435,6 +435,82 @@
     };
   }
 
+  // ---------- 게시판 일정 → 내 참석 찾기 (AI 없이) ----------
+  const board = { text: "", items: [], extra: [], done: false };
+  const shortName = (v) => v.venue_name.replace(/\s*테니스장\s*$/, "").trim();
+  function analyzeBoard() {
+    const name = me();
+    const entries = RaonKakao.parseBoard(board.text, todayKST());
+    const dates = new Set(entries.map((e) => e.date));
+    board.items = entries.filter((e) => e.peopleText.includes(name)).map((e) => {
+      const hits = state.venues.filter((v) => shortName(v) && e.placeText.includes(shortName(v)));
+      const venue = hits.length === 1 ? hits[0] : null; // 장소가 여러 개면 정하지 않음
+      const matches = venue ? state.reservations.filter((r) => r.reservation_date === e.date && r.venue_id === venue.id && r.status !== "취소"
+        && (!e.courts.length || e.courts.includes(String(r.court_number))) && !myAttFor(r.id)) : [];
+      const already = myAtt(e.date).length > 0;
+      return Object.assign({}, e, {
+        venue_id: venue ? venue.id : "",
+        matches, link: matches.length ? matches[0].id : "",
+        others: e.people.filter((x) => !x.includes(name)),
+        already, checked: !already,
+      });
+    });
+    // 게시판에는 내 이름이 없는데 참석으로 표시된 날
+    board.extra = state.attendance.filter((a) => a.member_name === name && dates.has(a.attend_date)
+      && !entries.some((e) => e.date === a.attend_date && e.peopleText.includes(name)));
+    board.done = true;
+  }
+  function boardCard() {
+    const it = board.items;
+    const rows = it.map((e, i) => {
+      const where = [e.placeText || (e.noCourt ? "코트 없음" : "장소 미정"), e.courts.length ? e.courts.join(",") + "번" : ""].filter(Boolean).join(" ");
+      const pick = e.matches.length
+        ? `<select data-blink="${i}">${e.matches.map((r) => `<option value="${esc(r.id)}" ${r.id === e.link ? "selected" : ""}>${esc(r.start_time)}~${esc(r.end_time)} ${esc(venueName(r.venue_id))} ${esc(r.court_number)}번 (${esc(r.reserved_by || "-")})</option>`).join("")}<option value="" ${e.link ? "" : "selected"}>예약에 연결 안 함</option></select>`
+        : `<div class="note">연결할 예약이 없어요. 날짜만 참석으로 넣어요.</div>`;
+      return `<div class="prop s-확정" style="border-left-color:var(--att)">
+        <div class="top"><label style="display:flex;gap:8px;align-items:center;font-weight:700">
+          <input type="checkbox" data-bchk="${i}" ${e.checked ? "checked" : ""} ${e.already ? "disabled" : ""}> ${esc(labelDate(e.date))} · ${esc(where)}</label>
+          ${e.already ? `<span class="conf">이미 참석 표시됨</span>` : ""}</div>
+        ${e.others.length ? `<div class="reason">함께: ${esc(e.others.join(", "))}</div>` : ""}
+        ${e.already ? "" : pick}
+      </div>`;
+    }).join("");
+    const n = it.filter((e) => e.checked && !e.already).length;
+    return `<div class="card">
+      <p class="step">📋 게시판 일정으로 내 참석 찾기</p>
+      <p class="note">카톡 게시판 '상세보기'의 일정 글을 길게 눌러 복사한 뒤 아래에 붙여 넣으세요. <b>${esc(me())}</b> 이름이 있는 날을 찾아 참석으로 넣어 드려요. (AI를 쓰지 않아 비용이 없어요)</p>
+      <div class="field"><textarea id="boardText" rows="6" placeholder="🎾11/27(금) 송정/2&#10;유환준 김정화 권정석">${esc(board.text)}</textarea></div>
+      <div class="btns"><button class="btn ghost" id="boardRun">내 참석 찾기</button></div>
+      ${board.done ? `
+        <div class="stat" style="margin-top:10px">내 이름이 있는 날 <b>${it.length}</b>개</div>
+        ${rows}
+        ${board.extra.length ? `<div class="warn">⚠ 게시판에는 이름이 없는데 참석으로 표시된 날: ${board.extra.map((a) => esc(labelDate(a.attend_date))).join(", ")} (달력에서 확인해 주세요)</div>` : ""}
+        ${n ? `<div class="btns"><button class="btn att" id="boardSave">선택한 ${n}개 참석으로 저장</button></div>` : ""}` : ""}
+    </div>`;
+  }
+  function bindBoard() {
+    const ta = $("#boardText"); if (!ta) return;
+    ta.oninput = () => { board.text = ta.value; };
+    $("#boardRun").onclick = () => { board.text = ta.value; analyzeBoard(); renderImport(); };
+    view.querySelectorAll("[data-bchk]").forEach((c) => c.onchange = () => { board.items[Number(c.dataset.bchk)].checked = c.checked; renderImport(); });
+    view.querySelectorAll("[data-blink]").forEach((sel) => sel.onchange = () => { board.items[Number(sel.dataset.blink)].link = sel.value; });
+    const sv = $("#boardSave"); if (sv) sv.onclick = saveBoard;
+  }
+  async function saveBoard() {
+    const list = board.items.filter((e) => e.checked && !e.already);
+    let ok = 0; const fails = [];
+    for (const e of list) {
+      const memo = [e.others.length ? "함께: " + e.others.join(", ") : "", !e.link && !e.venue_id && e.placeText ? "장소: " + e.placeText : "", "(게시판)"].filter(Boolean).join(" · ");
+      const data = e.link
+        ? { attend_date: e.date, reservation_id: e.link, member_name: me(), memo }
+        : { attend_date: e.date, venue_id: e.venue_id, court_number: e.courts.join(","), member_name: me(), memo };
+      try { await store.addAttendance(data); ok++; } catch (err) { fails.push(labelDate(e.date) + ": " + err.message); }
+    }
+    await reload();
+    analyzeBoard(); renderImport();
+    toast(fails.length ? `${ok}개 저장, ${fails.length}개 실패` : `${ok}개를 참석으로 표시했어요.`);
+  }
+
   // ---------- AI 분석 (카카오톡 TXT) ----------
   const IMP_KEY = "raon_import_v1";
   const ACT_LABEL = { create: "새 예약", update: "변경", cancel: "취소", duplicate: "이미 등록됨" };
@@ -489,12 +565,13 @@
 
   function renderImport() {
     if (store.mode === "local") {
-      view.innerHTML = `<div class="card"><p class="note"><b>체험 모드</b>에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결된 앱에서 사용해 주세요.</p></div>`;
+      view.innerHTML = boardCard() + `<div class="card"><p class="note"><b>체험 모드</b>에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결된 앱에서 사용해 주세요.</p></div>`;
+      bindBoard();
       return;
     }
     const cand = imp.messages.length ? candidates() : [];
     const pending = imp.proposals.filter((p) => p.state === "pending");
-    view.innerHTML = `
+    view.innerHTML = boardCard() + `
       <div class="card">
         <p class="step">1단계 · 카카오톡 대화 파일 고르기</p>
         <label class="filebtn">📄 ${imp.messages.length ? esc(imp.fileName) + " (다시 고르기)" : "대화 내보내기 TXT 파일 선택"}<input type="file" id="kakaoFile" accept=".txt,text/plain"></label>
@@ -523,6 +600,7 @@
         </div>`; })()}
       ${imp.proposals.map(propCard).join("")}` : ""}
     `;
+    bindBoard();
     const fi = $("#kakaoFile");
     if (fi) fi.onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
