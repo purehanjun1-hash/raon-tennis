@@ -46,14 +46,15 @@
   };
   const myAtt = (d) => state.attendance.filter((a) => a.attend_date === d && a.member_name === me())
     .sort((a, b) => String(attView(a).start || "99").localeCompare(String(attView(b).start || "99")));
-  // 일요일은 정기 모임: 따로 저장하지 않아도 항상 참석으로 봄 (빨간 점)
-  const isSun = (d) => parse(d).getUTCDay() === 0;
+  // 일요일은 정기 모임: 따로 저장하지 않아도 참석으로 봄 (빨간 점) — 2026년 11월 말까지만
+  const SUN_UNTIL = "2026-11-30";
+  const isSun = (d) => d <= SUN_UNTIL && parse(d).getUTCDay() === 0;
   const hasAtt = (d) => isSun(d) || myAtt(d).length > 0;
   const sunCard = () => `<div class="res att">
       <span class="bar"></span>
       <span class="main">
         <div class="t">🙋 참석 · 일요일 정기 참석</div>
-        <div class="sub">일요일은 항상 참석으로 표시돼요.</div>
+        <div class="sub">11월 말까지 일요일은 참석으로 표시돼요.</div>
       </span>
     </div>`;
   // 그날의 참석 카드들: 일요일인데 따로 넣은 참석이 없으면 정기 참석 카드
