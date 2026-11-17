@@ -206,7 +206,7 @@
     const prioSel = (i) => `<select data-lu-prio="${i}">${TYPES.map((t) => opt(t, st.prio[i], t)).join("")}${i > 0 ? opt("", st.prio[i] || "", "사용 안 함") : ""}</select>`;
     const r = st.result;
     const res = r ? `
-      <div class="section-title"><span>📋 조편성 결과${st.date ? " · " + esc(st.date) : ""}</span><button class="smallbtn lu-copybtn" data-lu-copy="1">💬 카톡 복사</button></div>
+      <div class="section-title"><span>📋 조편성 결과${st.date ? " · " + esc(st.date) : ""}</span><span class="lu-topbtns"><button class="smallbtn lu-imgbtn" data-lu-img="1">🖼 그림</button><button class="smallbtn lu-copybtn" data-lu-copy="1">💬 글</button></span></div>
       <p class="note lu-legend"><span class="nm-m">■ 회원</span> <span class="nm-g">■ 게스트</span></p>
       ${r.games.map((g) => `<div class="card lu-game">
         <div class="lu-gh"><b>${g.no}게임</b><span>${esc(g.time)}</span></div>
@@ -230,7 +230,8 @@
         <div class="btns"><button class="btn att" id="luSave" ${dayRows().length ? "" : "disabled"}>${r.savedAt ? "✓ 저장됨 · 다시 저장" : "오늘 결과 기록에 저장"}</button></div>
         <p class="note">저장하면 누적 기록에 들어가요. 같은 날짜로 다시 저장하면 그날 기록을 새로 덮어써요.</p>
       </div>
-      <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button><button class="btn primary" data-lu-copy="1">💬 카톡용 복사</button></div>` : "";
+      <div class="btns"><button class="btn ghost" id="luAgain">🔀 다시 짜기</button><button class="btn ghost" data-lu-copy="1">💬 글로 복사</button></div>
+      <div class="btns"><button class="btn primary" data-lu-img="1">🖼 그림으로 카톡에 보내기</button></div>` : "";
     const histHtml = `<div class="section-title"><span>🏆 누적 기록</span><button class="smallbtn" id="luHist">${hist ? "새로고침" : "불러오기"}</button></div>
       <div class="card">${hist ? (hist.length ? `<p class="note" style="margin-top:0">${esc(hist[0].play_date)} ~ ${esc(hist[hist.length - 1].play_date)} · ${new Set(hist.map((m) => m.play_date)).size}일 · ${hist.length}경기</p>${tableHtml(tally(hist))}` : `<div class="note">저장된 기록이 아직 없어요.</div>`) : `<div class="note">'불러오기'를 누르면 지금까지 저장한 경기 기록을 사람별로 모아 보여 줘요.</div>`}</div>`;
 
@@ -344,6 +345,7 @@
     };
     view.querySelector("#luRun").onclick = run;
     const ag = view.querySelector("#luAgain"); if (ag) ag.onclick = run;
+    view.querySelectorAll("[data-lu-img]").forEach((b) => b.onclick = () => openImage(toast));
     view.querySelectorAll("[data-lu-copy]").forEach((cp) => cp.onclick = async () => {
       const text = kakaoText();
       try { await navigator.clipboard.writeText(text); toast("복사했어요. 카톡에 붙여 넣으세요."); }
@@ -351,5 +353,50 @@
     });
   }
 
-  window.RaonLineup = { render, _build: build, _state: () => st, _text: kakaoText };
+  // ---------- 그림으로 보내기 ----------
+  function imageData() {
+    const guests = new Set(st.people.filter((p) => p.guest).map((p) => p.name));
+    const members = new Set(st.people.filter((p) => !p.guest).map((p) => p.name));
+    return {
+      date: st.date, courts: st.courts, games: st.result ? st.result.games : [],
+      isGuest: (n) => guests.has(n) && !members.has(n),
+      tally: tally(dayRows()),
+    };
+  }
+  async function openImage(toast) {
+    let blob;
+    try {
+      const cv = window.RaonLineupImage.draw(imageData());
+      blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    } catch (e) { return toast("그림을 만들지 못했어요: " + e.message); }
+    const fname = `라온_조편성_${st.date || "오늘"}.png`;
+    const file = new File([blob], fname, { type: "image/png" });
+    const url = URL.createObjectURL(blob);
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    const ov = document.createElement("div");
+    ov.className = "lu-ov";
+    ov.innerHTML = `<div class="lu-ov-box">
+        <div class="lu-ov-img"><img src="${url}" alt="조편성 그림"></div>
+        <div class="lu-ov-btns">
+          ${canShare ? `<button class="btn primary" data-ov="share">📤 카톡으로 보내기</button>` : ""}
+          <a class="btn ${canShare ? "ghost" : "primary"}" href="${url}" download="${esc(fname)}" data-ov="save">💾 사진으로 저장</a>
+          <button class="btn ghost" data-ov="close">닫기</button>
+        </div>
+        <p class="note" style="text-align:center;margin:6px 0 0">${canShare ? "'카톡으로 보내기' → 카카오톡 → 단톡방을 고르면 돼요." : "사진으로 저장한 뒤 카톡에서 사진으로 보내 주세요. 그림을 길게 눌러 저장할 수도 있어요."}</p>
+      </div>`;
+    const close = () => { ov.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+    ov.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-ov]");
+      if (e.target === ov) return close();
+      if (!b) return;
+      if (b.dataset.ov === "close") return close();
+      if (b.dataset.ov === "share") {
+        try { await navigator.share({ files: [file], title: "라온 조편성" }); }
+        catch (err) { if (err && err.name !== "AbortError") toast("공유하지 못했어요. '사진으로 저장'을 써 주세요."); }
+      }
+    });
+    document.body.appendChild(ov);
+  }
+
+  window.RaonLineup = { render, _build: build, _state: () => st, _text: kakaoText, _image: imageData };
 })();
