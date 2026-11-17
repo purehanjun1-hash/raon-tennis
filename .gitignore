@@ -1,0 +1,4 @@
+# 비밀정보가 들어간 파일은 올리지 않기
+.env
+*.local
+node_modules/

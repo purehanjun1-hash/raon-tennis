@@ -1,0 +1,176 @@
+// 데이터 저장소: Supabase 모드와 체험(로컬) 모드를 같은 방식으로 다룹니다.
+(function () {
+  const STATUSES = ["확정", "예정", "확인 필요", "취소"];
+  const SEED_VENUES = ["수목원 테니스장", "스포원 테니스장", "송정 테니스장"];
+
+  function uid() {
+    return (crypto.randomUUID && crypto.randomUUID()) ||
+      "id-" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+  function nowIso() { return new Date().toISOString(); }
+
+  function toMin(t) {
+    const [h, m] = String(t).slice(0, 5).split(":").map(Number);
+    return h * 60 + m;
+  }
+  // 같은 날짜 + 같은 장소 + 같은 코트 + 시간 겹침 (취소된 예약은 제외)
+  function findConflict(list, r, ignoreId) {
+    if (r.status === "취소") return null;
+    const s = toMin(r.start_time), e = toMin(r.end_time);
+    const court = String(r.court_number || "").trim();
+    return list.find((x) =>
+      x.id !== ignoreId &&
+      x.status !== "취소" &&
+      x.reservation_date === r.reservation_date &&
+      x.venue_id === r.venue_id &&
+      String(x.court_number || "").trim() === court &&
+      toMin(x.start_time) < e && s < toMin(x.end_time)
+    ) || null;
+  }
+
+  function validate(r) {
+    if (!r.reservation_date) return "날짜를 입력해 주세요.";
+    if (!r.start_time || !r.end_time) return "시작·종료 시간을 입력해 주세요.";
+    if (toMin(r.end_time) <= toMin(r.start_time)) return "종료 시간은 시작 시간보다 늦어야 해요.";
+    if (!r.venue_id) return "장소를 선택해 주세요.";
+    if (!String(r.court_number || "").trim()) return "코트 번호를 입력해 주세요.";
+    if (!STATUSES.includes(r.status)) return "상태를 선택해 주세요.";
+    return null;
+  }
+
+  function pickFields(r) {
+    return {
+      reservation_date: r.reservation_date,
+      start_time: String(r.start_time).slice(0, 5),
+      end_time: String(r.end_time).slice(0, 5),
+      venue_id: r.venue_id,
+      court_number: String(r.court_number || "").trim(),
+      reserved_by: (r.reserved_by || "").trim(),
+      status: r.status,
+      memo: (r.memo || "").trim(),
+    };
+  }
+  function normalize(r) {
+    return Object.assign({}, r, {
+      start_time: String(r.start_time).slice(0, 5),
+      end_time: String(r.end_time).slice(0, 5),
+    });
+  }
+  function reasonFor(before, after) {
+    if (!before) return "등록";
+    if (before.status !== "취소" && after.status === "취소") return "취소";
+    if (before.status === "취소" && after.status !== "취소") return "취소 해제";
+    return "수정";
+  }
+
+  // ---------------- 체험(로컬) 모드 ----------------
+  class LocalStore {
+    constructor() { this.mode = "local"; this.key = "raon_tennis_v1"; }
+    _load() {
+      let d = null;
+      try { d = JSON.parse(localStorage.getItem(this.key)); } catch (e) { d = null; }
+      if (!d) {
+        d = { venues: [], reservations: [], history: [] };
+        SEED_VENUES.forEach((n) => d.venues.push({ id: uid(), venue_name: n, address: "", court_information: [], created_at: nowIso() }));
+        this._save(d);
+      }
+      return d;
+    }
+    _save(d) { try { localStorage.setItem(this.key, JSON.stringify(d)); } catch (e) { /* 저장 불가 */ } }
+    async init() { this._load(); return { needsLogin: false }; }
+    async user() { return { email: "체험 모드" }; }
+    async login() { return null; }
+    async logout() {}
+    async listVenues() { return this._load().venues.slice().sort((a, b) => a.created_at.localeCompare(b.created_at)); }
+    async saveVenue(v) {
+      const d = this._load();
+      const name = (v.venue_name || "").trim();
+      if (!name) throw new Error("장소 이름을 입력해 주세요.");
+      if (v.id) {
+        const x = d.venues.find((y) => y.id === v.id);
+        Object.assign(x, { venue_name: name, address: v.address || "", court_information: v.court_information || [] });
+      } else {
+        d.venues.push({ id: uid(), venue_name: name, address: v.address || "", court_information: v.court_information || [], created_at: nowIso() });
+      }
+      this._save(d);
+    }
+    async listReservations() { return this._load().reservations.map(normalize); }
+    async saveReservation(input) {
+      const d = this._load();
+      const r = pickFields(input);
+      const err = validate(r); if (err) throw new Error(err);
+      const c = findConflict(d.reservations, r, input.id);
+      if (c) throw Object.assign(new Error("겹치는 예약이 이미 있어요."), { conflict: c });
+      if (input.id) {
+        const x = d.reservations.find((y) => y.id === input.id);
+        const before = Object.assign({}, x);
+        Object.assign(x, r, { updated_at: nowIso() });
+        d.history.push({ id: uid(), reservation_id: x.id, previous_data: before, updated_data: Object.assign({}, x), change_reason: reasonFor(before, x), changed_at: nowIso() });
+        this._save(d); return x;
+      }
+      const x = Object.assign({ id: uid(), source_message: null, confidence: null, created_at: nowIso(), updated_at: nowIso() }, r);
+      d.reservations.push(x);
+      d.history.push({ id: uid(), reservation_id: x.id, previous_data: null, updated_data: Object.assign({}, x), change_reason: "등록", changed_at: nowIso() });
+      this._save(d); return x;
+    }
+    async history(id) {
+      return this._load().history.filter((h) => h.reservation_id === id).sort((a, b) => b.changed_at.localeCompare(a.changed_at));
+    }
+  }
+
+  // ---------------- Supabase 모드 ----------------
+  class SupabaseStore {
+    constructor(url, key) {
+      this.mode = "supabase";
+      this.sb = window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } });
+    }
+    _check(res) {
+      if (res.error) {
+        const e = res.error;
+        if (e.code === "23P01") throw new Error("겹치는 예약이 이미 있어요. (같은 날짜·장소·코트·시간)");
+        if (e.code === "42501" || /row-level security/i.test(e.message)) throw new Error("권한이 없어요. 다시 로그인해 주세요.");
+        throw new Error(e.message || "서버 오류가 났어요.");
+      }
+      return res.data;
+    }
+    async init() {
+      const { data } = await this.sb.auth.getSession();
+      return { needsLogin: !data.session };
+    }
+    async user() { const { data } = await this.sb.auth.getUser(); return data.user; }
+    async login(email, password) {
+      const { error } = await this.sb.auth.signInWithPassword({ email, password });
+      if (error) return "이메일 또는 비밀번호가 맞지 않아요.";
+      return null;
+    }
+    async logout() { await this.sb.auth.signOut(); }
+    async listVenues() { return this._check(await this.sb.from("venues").select("*").order("created_at")); }
+    async saveVenue(v) {
+      const name = (v.venue_name || "").trim();
+      if (!name) throw new Error("장소 이름을 입력해 주세요.");
+      const row = { venue_name: name, address: v.address || "", court_information: v.court_information || [] };
+      if (v.id) this._check(await this.sb.from("venues").update(row).eq("id", v.id));
+      else this._check(await this.sb.from("venues").insert(row));
+    }
+    async listReservations() {
+      return this._check(await this.sb.from("reservations").select("*").order("reservation_date").order("start_time")).map(normalize);
+    }
+    async saveReservation(input, currentList) {
+      const r = pickFields(input);
+      const err = validate(r); if (err) throw new Error(err);
+      const c = findConflict(currentList || [], r, input.id);
+      if (c) throw Object.assign(new Error("겹치는 예약이 이미 있어요."), { conflict: c });
+      if (input.id) return normalize(this._check(await this.sb.from("reservations").update(r).eq("id", input.id).select().single()));
+      return normalize(this._check(await this.sb.from("reservations").insert(r).select().single()));
+    }
+    async history(id) {
+      return this._check(await this.sb.from("reservation_history").select("*").eq("reservation_id", id).order("changed_at", { ascending: false }));
+    }
+  }
+
+  const cfg = window.RAON_CONFIG || {};
+  const useSb = cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && window.supabase;
+  window.RaonStore = useSb ? new SupabaseStore(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : new LocalStore();
+  window.RaonStore.STATUSES = STATUSES;
+  window.RaonStore.findConflict = findConflict;
+})();
