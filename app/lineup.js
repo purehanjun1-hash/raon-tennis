@@ -237,7 +237,7 @@
 
     view.innerHTML = `
       <div class="card">
-        <p class="step">🎾 조편성</p>
+        <div class="lu-head"><p class="step" style="margin:0">🎾 조편성</p><button type="button" class="lu-reset" id="luReset">🔄 전체 리셋</button></div>
         <div class="row2">
           <div class="field"><label>날짜</label><input type="date" id="luDate" value="${esc(st.date)}"></div>
           <div class="field"><label>코트 수</label><select id="luCourts">${[1, 2, 3, 4, 5, 6].map((n) => opt(n, st.courts, n + "면")).join("")}</select></div>
@@ -308,6 +308,16 @@
     view.querySelectorAll("[data-lu-from]").forEach((el) => el.onchange = () => { const p = st.people[Number(el.dataset.luFrom)]; p.from = Number(el.value); if (p.to && p.to < p.from) p.to = p.from; save(); rerender(); });
     view.querySelectorAll("[data-lu-to]").forEach((el) => el.onchange = () => { const p = st.people[Number(el.dataset.luTo)]; p.to = Number(el.value); if (p.to && p.to < p.from) p.from = p.to; save(); rerender(); });
     view.querySelector("#luAll").onclick = () => keepY(() => { st.people.forEach((p) => { if (!p.guest && !p.on) { p.on = true; p.from = 1; p.to = 0; } }); });
+    view.querySelector("#luReset").onclick = () => {
+      const unsaved = st.result && dayRows().length && !st.result.savedAt;
+      const msg = "오늘 선수 체크와 조편성·스코어를 모두 지우고 처음부터 시작할까요?\n(게스트 이름, 게임 시간 설정, 이미 저장한 누적 기록은 그대로예요)"
+        + (unsaved ? "\n\n⚠ 입력한 스코어가 아직 저장되지 않았어요." : "");
+      if (!confirm(msg)) return;
+      st.people.forEach((p) => { p.on = false; p.from = 1; p.to = 0; });
+      st.result = null; st.date = todayKST();
+      save(); rerender(); window.scrollTo(0, 0);
+      toast("리셋했어요. 오늘 선수를 다시 골라 주세요.");
+    };
     const nb = view.querySelector("#luNone"); if (nb) nb.onclick = () => keepY(() => { st.people.forEach((p) => { p.on = false; }); });
     const store = ui && ui.store;
     view.querySelectorAll("[data-lu-sc]").forEach((el) => el.onchange = () => {
