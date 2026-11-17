@@ -29,11 +29,38 @@
     selected: todayKST(),   // 선택된 날짜
     venues: [],
     reservations: [],
+    attendance: [],         // 내 참석 일정 (달력의 빨간 점)
     listFilter: { status: "전체", scope: "upcoming" },
   };
   const venueName = (id) => (state.venues.find((v) => v.id === id) || {}).venue_name || "(삭제된 장소)";
   const byTime = (a, b) => (a.reservation_date + a.start_time).localeCompare(b.reservation_date + b.start_time);
   const onDate = (d) => state.reservations.filter((r) => r.reservation_date === d).sort(byTime);
+
+  // ---------- 내 참석 일정 ----------
+  const ME_KEY = "raon_me";
+  const me = () => { try { return localStorage.getItem(ME_KEY) || "유환준"; } catch (e) { return "유환준"; } };
+  // 참석이 예약에 연결돼 있으면 예약의 시간·장소·코트를 따라감
+  const attView = (a) => {
+    const r = a.reservation_id ? state.reservations.find((x) => x.id === a.reservation_id) : null;
+    return { start: r ? r.start_time : a.start_time, end: r ? r.end_time : a.end_time, venue_id: r ? r.venue_id : a.venue_id, court: r ? r.court_number : a.court_number, res: r };
+  };
+  const myAtt = (d) => state.attendance.filter((a) => a.attend_date === d && a.member_name === me())
+    .sort((a, b) => String(attView(a).start || "99").localeCompare(String(attView(b).start || "99")));
+  const myAttFor = (resId) => state.attendance.find((a) => a.reservation_id === resId && a.member_name === me());
+  function attCard(a, showDate) {
+    const v = attView(a);
+    const time = v.start ? `${v.start}${v.end ? "~" + v.end : ""}` : "시간 미정";
+    const place = [v.venue_id ? venueName(v.venue_id) : "", v.court ? `${v.court}번 코트` : ""].filter(Boolean).join(" · ");
+    return `<div class="res att">
+      <span class="bar"></span>
+      <span class="main">
+        <div class="t">🙋 참석 · ${esc((showDate ? labelDate(a.attend_date) + " " : "") + time)}</div>
+        <div class="sub">${esc(place || "장소 미정")}${v.res && v.res.status === "취소" ? " · ⚠ 예약이 취소됨" : ""}</div>
+        ${a.memo ? `<div class="sub">📝 ${esc(a.memo)}</div>` : ""}
+      </span>
+      <span><button class="smallbtn" data-attdel="${esc(a.id)}">참석 취소</button></span>
+    </div>`;
+  }
 
   function toast(msg) {
     const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
@@ -44,6 +71,7 @@
     try {
       [state.venues, state.reservations] = await Promise.all([store.listVenues(), store.listReservations()]);
     } catch (e) { toast(e.message); }
+    try { state.attendance = await store.listAttendance(); } catch (e) { state.attendance = []; }
   }
 
   // ---------- 예약 카드 ----------
@@ -53,13 +81,13 @@
       <span class="bar"></span>
       <span class="main">
         <div class="t">${esc(when)}</div>
-        <div class="sub">${esc(venueName(r.venue_id))} · ${esc(r.court_number)}번 코트${r.reserved_by ? " · " + esc(r.reserved_by) : ""}</div>
+        <div class="sub">${esc(venueName(r.venue_id))} · ${esc(r.court_number)}번 코트${r.reserved_by ? " · " + esc(r.reserved_by) : ""}${myAttFor(r.id) ? ` · <b class="attmark">🙋 내 참석</b>` : ""}</div>
         ${r.memo ? `<div class="sub">📝 ${esc(r.memo)}</div>` : ""}
       </span>
       <span><span class="chip">${esc(r.status)}</span></span>
     </button>`;
   }
-  const legend = () => `<div class="legend">${STATUSES.map((s) => `<span class="${sClass(s)}"><i class="dot"></i>${s}</span>`).join("")}</div>`;
+  const legend = () => `<div class="legend">${STATUSES.map((s) => `<span class="${sClass(s)}"><i class="dot"></i>${s}</span>`).join("")}<span><i class="dot att"></i>내 참석</span></div>`;
 
   // ---------- 캘린더 ----------
   function renderCalendar() {
@@ -78,7 +106,8 @@
         const dt = parse(d);
         if (i === 35 && dt.getUTCMonth() !== m) break; // 6번째 줄이 필요 없으면 생략
         const list = onDate(d);
-        const dots = list.slice(0, 4).map((r) => `<i class="dot ${sClass(r.status)}"></i>`).join("");
+        const att = myAtt(d).length ? `<i class="dot att"></i>` : "";
+        const dots = att + list.slice(0, 4).map((r) => `<i class="dot ${sClass(r.status)}"></i>`).join("");
         const more = list.length > 4 ? `<span class="more">+${list.length - 4}</span>` : "";
         const cls = ["day", dt.getUTCMonth() !== m ? "other" : "", d === today ? "today" : "", d === state.selected ? "sel" : "", dt.getUTCDay() === 0 ? "sun" : dt.getUTCDay() === 6 ? "sat" : ""].join(" ");
         cells += `<button class="${cls}" data-date="${d}"><span class="n">${dt.getUTCDate()}</span><span class="dots">${dots}${more}</span></button>`;
@@ -93,12 +122,15 @@
       for (let i = 0; i < 7; i++) {
         const d = addDays(start, i);
         const list = onDate(d);
+        const atts = myAtt(d);
         body += `<div class="week-day"><h3 class="${d === today ? "today" : ""}">${labelDate(d)}${d === today ? " · 오늘" : ""}</h3>
+          ${atts.map((a) => attCard(a)).join("")}
           ${list.length ? list.map((r) => resCard(r)).join("") : `<div class="empty">예약 없음</div>`}</div>`;
       }
     }
 
     const sel = onDate(state.selected);
+    const selAtt = myAtt(state.selected);
     view.innerHTML = `
       <div class="card">
         <div class="cal-head">
@@ -114,6 +146,8 @@
         ${legend()}
       </div>
       ${state.calMode === "month" ? `
+        <div class="section-title"><span>${labelDate(state.selected)} · ${esc(me())} 참석</span><button class="smallbtn" data-attadd="${state.selected}">🙋 참석 추가</button></div>
+        ${selAtt.length ? selAtt.map((a) => attCard(a)).join("") : `<div class="note" style="margin:0 0 8px">이 날은 참석 일정이 없어요.</div>`}
         <div class="section-title"><span>${labelDate(state.selected)} 예약 ${sel.length}건</span></div>
         ${sel.length ? sel.map((r) => resCard(r)).join("") : `<div class="empty-box">이 날은 예약이 없어요.<br>오른쪽 아래 ＋ 버튼으로 추가할 수 있어요.</div>`}` : ""}
     `;
@@ -167,6 +201,11 @@
     view.innerHTML = `
       <div class="section-title"><span>장소 관리</span><button class="smallbtn" data-venue="">＋ 장소 추가</button></div>
       <div class="card">${venues || `<div class="empty-box">등록된 장소가 없어요.</div>`}</div>
+      <div class="section-title"><span>내 이름 (참석 일정)</span></div>
+      <div class="card">
+        <div class="field" style="margin-bottom:6px"><input id="meName" value="${esc(me())}" placeholder="예: 유환준"></div>
+        <p class="note">달력의 빨간 점(내 참석)은 이 이름으로 저장·표시돼요.</p>
+      </div>
       <div class="section-title"><span>계정 · 데이터</span></div>
       <div class="card">
         ${store.mode === "local"
@@ -176,6 +215,7 @@
         <p class="note">모든 날짜·시간은 한국 시간(KST) 기준입니다.</p>
       </div>
     `;
+    const mn = $("#meName"); if (mn) mn.onchange = () => { const v = mn.value.trim(); if (!v) return; try { localStorage.setItem(ME_KEY, v); } catch (e) { /* 저장 불가 */ } toast("이름을 저장했어요."); };
     const lo = $("#logout"); if (lo) lo.onclick = async () => { await store.logout(); location.reload(); };
   }
 
@@ -283,6 +323,9 @@
         ${r.source_message ? `<div class="section-title" style="margin-top:12px"><span>카톡 원본 (AI 분석${r.confidence != null ? ", 신뢰도 " + Math.round(r.confidence * 100) + "%" : ""})</span></div><div class="quote">${esc(r.source_message)}</div>` : ""}
       </div>
       <div class="btns">
+        ${r.status !== "취소" ? (myAttFor(r.id)
+          ? `<button class="btn att-on" data-attres="${esc(r.id)}">🙋 참석 중 · 누르면 참석 취소</button>`
+          : `<button class="btn att" data-attres="${esc(r.id)}">🙋 이 예약에 참석</button>`) : ""}
         <button class="btn primary" data-edit="${esc(r.id)}">수정</button>
         ${r.status === "취소"
           ? `<button class="btn ghost" data-restore="${esc(r.id)}">취소 되돌리기 (확정으로)</button>`
@@ -302,6 +345,60 @@
       await store.saveReservation(Object.assign({}, r, { status }), state.reservations);
       await reload(); toast(msg); render(); openDetail(id);
     } catch (err) { toast(err.message); }
+  }
+
+  // 참석 추가: 그날 예약 중에서 고르거나, 예약 없이 직접 입력
+  function openAttForm(date) {
+    const dayRes = onDate(date).filter((r) => r.status !== "취소" && !myAttFor(r.id));
+    openSheet(`
+      <h2>🙋 참석 추가<button class="close" data-close>×</button></h2>
+      <form id="attForm" novalidate>
+        <div id="attErr"></div>
+        <div class="field"><label>날짜</label><input type="date" name="attend_date" value="${esc(date)}" required></div>
+        <div class="field"><label>어느 예약에 참석하나요?</label>
+          <select name="reservation_id">
+            <option value="">예약 없이 직접 입력</option>
+            ${dayRes.map((r) => `<option value="${esc(r.id)}">${esc(r.start_time)}~${esc(r.end_time)} ${esc(venueName(r.venue_id))} ${esc(r.court_number)}번${r.reserved_by ? " (" + esc(r.reserved_by) + ")" : ""}</option>`).join("")}
+          </select></div>
+        <div id="attManual">
+          <div class="row2">
+            <div class="field"><label>시작 시간 (선택)</label><input type="time" name="start_time" step="600" value="20:00"></div>
+            <div class="field"><label>종료 시간 (선택)</label><input type="time" name="end_time" step="600" value="22:00"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>장소 (선택)</label><select name="venue_id"><option value="">미정</option>${state.venues.map((v) => `<option value="${esc(v.id)}">${esc(v.venue_name)}</option>`).join("")}</select></div>
+            <div class="field"><label>코트 (선택)</label><input name="court_number" placeholder="예: 2"></div>
+          </div>
+        </div>
+        <div class="field"><label>메모 (선택)</label><input name="memo" placeholder="예: 게스트 1명"></div>
+        <div class="btns"><button class="btn att" type="submit">참석으로 저장</button></div>
+      </form>`);
+    const f = $("#attForm");
+    const sync = () => { $("#attManual").style.display = f.reservation_id.value ? "none" : ""; };
+    f.reservation_id.onchange = sync; sync();
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(f).entries());
+      if (data.reservation_id) { data.start_time = data.end_time = data.venue_id = data.court_number = ""; }
+      data.member_name = me();
+      try {
+        await store.addAttendance(data);
+        await reload(); closeSheet(); state.selected = data.attend_date; state.cursor = data.attend_date; toast("참석으로 표시했어요."); render();
+      } catch (err) { $("#attErr").innerHTML = `<div class="err">${esc(err.message)}</div>`; }
+    };
+  }
+  async function toggleResAttend(resId) {
+    const r = state.reservations.find((x) => x.id === resId); if (!r) return;
+    const cur = myAttFor(resId);
+    try {
+      if (cur) { await store.removeAttendance(cur.id); toast("참석을 취소했어요."); }
+      else { await store.addAttendance({ attend_date: r.reservation_date, reservation_id: r.id, member_name: me() }); toast("참석으로 표시했어요."); }
+      await reload(); render(); openDetail(resId);
+    } catch (err) { toast(err.message); }
+  }
+  async function removeAtt(id) {
+    if (!confirm("이 참석 일정을 지울까요?")) return;
+    try { await store.removeAttendance(id); await reload(); toast("참석을 취소했어요."); render(); } catch (err) { toast(err.message); }
   }
 
   function openVenueForm(id) {
@@ -673,6 +770,9 @@
     }
     if (ds.mode) { state.calMode = ds.mode; state.cursor = state.selected; return render(); }
     if (ds.today !== undefined) { state.cursor = state.selected = todayKST(); return render(); }
+    if (ds.attadd) return openAttForm(ds.attadd);
+    if (ds.attdel) return removeAtt(ds.attdel);
+    if (ds.attres) return toggleResAttend(ds.attres);
     if (ds.res) return openDetail(ds.res);
     if (ds.edit) return openForm(state.reservations.find((x) => x.id === ds.edit));
     if (ds.cancel) { if (confirm("이 예약을 취소할까요?\n(삭제되지 않고 '취소' 상태로 기록이 남아요.)")) setStatus(ds.cancel, "취소", "예약을 취소했어요."); return; }

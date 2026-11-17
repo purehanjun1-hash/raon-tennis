@@ -54,6 +54,23 @@
     if (r.confidence !== undefined && r.confidence !== null && r.confidence !== "") f.confidence = Number(r.confidence);
     return f;
   }
+  // 참석 일정: 시간·장소·코트는 비워도 됨 (예약에 연결하면 예약 정보를 따라감)
+  function pickAttendance(a) {
+    const t = (v) => (v ? String(v).slice(0, 5) : null);
+    const f = {
+      attend_date: a.attend_date,
+      start_time: t(a.start_time), end_time: t(a.end_time),
+      venue_id: a.venue_id || null,
+      court_number: (a.court_number || "").trim() || null,
+      reservation_id: a.reservation_id || null,
+      member_name: (a.member_name || "").trim() || "유환준",
+      memo: (a.memo || "").trim(),
+    };
+    if (!f.attend_date) throw new Error("날짜를 입력해 주세요.");
+    if (f.start_time && f.end_time && toMin(f.end_time) <= toMin(f.start_time)) throw new Error("종료 시간은 시작 시간보다 늦어야 해요.");
+    return f;
+  }
+  const normAtt = (a) => Object.assign({}, a, { start_time: a.start_time ? String(a.start_time).slice(0, 5) : null, end_time: a.end_time ? String(a.end_time).slice(0, 5) : null });
   function normalize(r) {
     return Object.assign({}, r, {
       start_time: String(r.start_time).slice(0, 5),
@@ -120,6 +137,14 @@
     async history(id) {
       return this._load().history.filter((h) => h.reservation_id === id).sort((a, b) => b.changed_at.localeCompare(a.changed_at));
     }
+    async listAttendance() { return (this._load().attendance || []).map(normAtt); }
+    async addAttendance(a) {
+      const d = this._load(); d.attendance = d.attendance || [];
+      const f = pickAttendance(a);
+      if (f.reservation_id && d.attendance.some((x) => x.reservation_id === f.reservation_id && x.member_name === f.member_name)) throw new Error("이미 참석으로 표시된 예약이에요.");
+      const x = Object.assign({ id: uid(), created_at: nowIso() }, f); d.attendance.push(x); this._save(d); return x;
+    }
+    async removeAttendance(id) { const d = this._load(); d.attendance = (d.attendance || []).filter((x) => x.id !== id); this._save(d); }
     async analyze() { throw new Error("체험 모드에서는 AI 분석을 쓸 수 없어요. 서버(Supabase)에 연결해야 해요."); }
     async createImport() { return null; }
     async updateImport() {}
@@ -173,6 +198,13 @@
     async history(id) {
       return this._check(await this.sb.from("reservation_history").select("*").eq("reservation_id", id).order("changed_at", { ascending: false }));
     }
+    async listAttendance() { return this._check(await this.sb.from("attendance").select("*").order("attend_date")).map(normAtt); }
+    async addAttendance(a) {
+      const res = await this.sb.from("attendance").insert(pickAttendance(a)).select().single();
+      if (res.error && res.error.code === "23505") throw new Error("이미 참석으로 표시된 예약이에요.");
+      return normAtt(this._check(res));
+    }
+    async removeAttendance(id) { this._check(await this.sb.from("attendance").delete().eq("id", id)); }
     // AI 분석 (서버 함수 호출). payload: { today, venues, existing, messages }
     async analyze(payload) {
       const { data, error } = await this.sb.functions.invoke("analyze-messages", { body: payload });
