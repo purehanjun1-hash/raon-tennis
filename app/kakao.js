@@ -51,6 +51,8 @@
   function isCandidate(msg, venueNames) {
     const t = msg.text;
     if (/^(사진|동영상|이모티콘|파일:|삭제된 메시지입니다)/.test(t.trim())) return false;
+    // 경기 대진표는 코트 예약과 관계없음 (총무님 확인) — AI에 보내지 않음
+    if (/대진표/.test(t)) return false;
     const venueHit = (venueNames || []).some((v) => {
       const short = v.replace(/\s*테니스장\s*$/, "").trim();
       return short && t.includes(short);
