@@ -439,7 +439,7 @@
           <button class="btn ghost" data-pedit="${i}">고쳐서 승인</button>
           <button class="btn ghost" data-preject="${i}">무시</button></div>`;
       }
-    } else actions = `<div class="donelabel">${p.state === "applied" ? "✅ 반영됨" : p.state === "rejected" ? "무시함" : "확인함"}</div>`;
+    } else actions = `<div class="donelabel">${p.state === "applied" ? "✅ 반영됨" : p.state === "rejected" ? "무시함" : p.state === "dropped" ? "등록 안 함 · 뒤 메시지에서 취소됐어요" : "확인함"}</div>`;
     return `<div class="prop ${sClass(st)} ${p.state !== "pending" ? "done" : ""}">
       <div class="top"><span class="act ${p.action}">${ACT_LABEL[p.action] || p.action}</span><span class="chip">${esc(st)}</span><span class="conf">${conf}</span></div>
       ${body}
@@ -450,6 +450,25 @@
     </div>`;
   }
 
+  const PFIELDS = ["reservation_date", "start_time", "end_time", "venue_id", "court_number", "reserved_by", "status"];
+  // 뒤 묶음의 변경·취소·재언급(it)을 앞 묶음에서 찾은 제안(p)에 합친다
+  function mergeInto(p, it, msgs) {
+    p.message_ids = (p.message_ids || []).concat(it.message_ids || []);
+    p.msgs = (p.msgs || []).concat(msgs).sort((a, b) => (a.sent_at < b.sent_at ? -1 : 1));
+    if (it.reason) p.reason = [p.reason, it.reason].filter(Boolean).join(" / ");
+    if (it.action === "duplicate") return;
+    if (typeof it.confidence === "number") p.confidence = Math.min(typeof p.confidence === "number" ? p.confidence : 1, it.confidence);
+    if (it.action === "cancel") {
+      p.status = "취소";
+      if (p.action === "create") p.state = "dropped"; // 등록 전에 취소된 예약은 등록하지 않음
+      else p.action = "cancel";
+    } else { // update
+      PFIELDS.forEach((k) => { if (it[k] !== null && it[k] !== undefined && it[k] !== "") p[k] = it[k]; });
+      if (p.state === "dropped") p.state = "pending";
+      if (p.action === "cancel") p.action = "update";
+    }
+  }
+
   async function runAnalysis() {
     const cand = candidates();
     if (!cand.length || imp.busy) return;
@@ -457,37 +476,82 @@
     let importId = null;
     try { importId = await store.createImport(imp.fileName); } catch (e) { /* 기록 실패해도 분석은 진행 */ }
     const venues = state.venues.map((v) => ({ id: v.id, name: v.venue_name, courts: v.court_information || [] }));
-    const existing = state.reservations
+    const base = state.reservations
       .filter((r) => r.status !== "취소" && r.reservation_date >= addDays(imp.fromDate, -7))
       .map((r) => ({ id: r.id, date: r.reservation_date, start: r.start_time, end: r.end_time, venue_id: r.venue_id, court: r.court_number, reserved_by: r.reserved_by, status: r.status }));
     const today = todayKST();
-    const BATCH = 40;
+    const BATCH = 50;
     const found = [];
+    // 서버 예약 + 앞 묶음에서 찾은 제안을 반영한 '지금까지 알려진 예약' 목록
+    const knownExisting = () => {
+      const list = base.map((r) => Object.assign({}, r));
+      found.forEach((p, k) => {
+        if (p.state !== "pending") return;
+        if (p.action === "create") {
+          list.push({ id: "new-" + k, date: p.reservation_date, start: p.start_time, end: p.end_time, venue_id: p.venue_id, court: p.court_number, reserved_by: p.reserved_by, status: p.status, note: "같은 대화에서 앞서 찾은 예약(아직 등록 전)" });
+          return;
+        }
+        const i = list.findIndex((r) => r.id === p.target_reservation_id);
+        if (i < 0) return;
+        if (p.action === "cancel") list.splice(i, 1);
+        else if (p.action === "update") {
+          const r = list[i];
+          [["reservation_date", "date"], ["start_time", "start"], ["end_time", "end"], ["venue_id", "venue_id"], ["court_number", "court"], ["reserved_by", "reserved_by"], ["status", "status"]]
+            .forEach(([a, b]) => { if (p[a]) r[b] = p[a]; });
+        }
+      });
+      return list;
+    };
+    const queue = [];
+    for (let i = 0; i < cand.length; i += BATCH) queue.push(cand.slice(i, i + BATCH));
+    let done = 0, waits = 0;
     try {
-      for (let i = 0; i < cand.length; i += BATCH) {
-        const chunk = cand.slice(i, i + BATCH);
-        imp.progress = cand.length > BATCH ? `(${Math.min(i + BATCH, cand.length)}/${cand.length})` : "";
+      while (queue.length) {
+        const chunk = queue.shift();
+        imp.progress = `(${done}/${cand.length})`;
         renderImport();
-        const res = await store.analyze({
-          today: `${today}(${DOW[dow(today)]})`,
-          venues, existing,
-          messages: chunk.map((m) => ({ id: m.id, sent_at: withWeekday(m.sent_at), author: m.author, text: m.text })),
-        });
+        let res;
+        try {
+          res = await store.analyze({
+            today: `${today}(${DOW[dow(today)]})`,
+            venues, existing: knownExisting(),
+            messages: chunk.map((m) => ({ id: m.id, sent_at: withWeekday(m.sent_at), author: m.author, text: m.text })),
+          });
+        } catch (e) {
+          if (e.status === 429 && waits < 3) { waits++; queue.unshift(chunk); await new Promise((r) => setTimeout(r, 20000)); continue; }
+          // 시간 초과·응답 너무 김 등: 묶음을 반으로 나눠 다시 시도
+          if (e.status !== 401 && e.status !== 500 && chunk.length > 10) {
+            const h = Math.ceil(chunk.length / 2);
+            queue.unshift(chunk.slice(0, h), chunk.slice(h));
+            continue;
+          }
+          throw e;
+        }
+        done += chunk.length;
         (res.items || []).forEach((it) => {
           const msgs = (it.message_ids || []).map((id) => imp.messages[id]).filter(Boolean)
             .map((m) => ({ author: m.author, sent_at: m.sent_at, text: m.text }));
           if (it.venue_id && !state.venues.some((v) => v.id === it.venue_id)) it.venue_id = null;
+          const tid = it.target_reservation_id;
+          let host = null;
+          if (it.action !== "create" && tid) {
+            if (/^new-\d+$/.test(tid)) host = found[Number(tid.slice(4))] || null;
+            else host = found.find((p) => p.state === "pending" && p.action !== "duplicate" && p.target_reservation_id === tid) || null;
+          }
+          if (host) return mergeInto(host, it, msgs);
+          if (tid && /^new-/.test(tid)) it.target_reservation_id = null;
           found.push(Object.assign({}, it, { msgs, state: "pending" }));
         });
       }
       imp.proposals = found.concat(imp.proposals.filter((p) => p.state === "pending"));
       saveImp();
-      await store.updateImport(importId, `완료: 제안 ${found.length}개`);
-      toast(found.length ? `AI 제안 ${found.length}개를 찾았어요.` : "예약 관련 내용을 찾지 못했어요.");
+      const n = found.filter((p) => p.state === "pending").length;
+      await store.updateImport(importId, `완료: 제안 ${n}개`);
+      toast(n ? `AI 제안 ${n}개를 찾았어요.` : "예약 관련 내용을 찾지 못했어요.");
     } catch (e) {
-      imp.error = e.message;
+      imp.error = e.message + (found.length ? ` (그 전까지 찾은 제안 ${found.length}개는 아래에 있어요.)` : "");
       await store.updateImport(importId, "오류: " + e.message);
-      if (found.length) { imp.proposals = found.concat(imp.proposals); saveImp(); }
+      if (found.length) { imp.proposals = found.concat(imp.proposals.filter((p) => p.state === "pending")); saveImp(); }
     } finally {
       imp.busy = false; imp.progress = ""; renderImport();
     }

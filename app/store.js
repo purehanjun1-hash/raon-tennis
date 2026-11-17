@@ -179,7 +179,9 @@
       if (error) {
         let msg = "AI 분석 중 오류가 났어요.";
         try { const b = await error.context.json(); if (b && b.error) msg = b.error; } catch (e) { /* 본문 없음 */ }
-        throw new Error(msg);
+        const err = new Error(msg);
+        err.status = error.context && error.context.status; // 없으면 연결 오류
+        throw err;
       }
       return data;
     }
